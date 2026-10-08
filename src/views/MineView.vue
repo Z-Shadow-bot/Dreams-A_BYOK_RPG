@@ -5,8 +5,12 @@ import { getLogText, clearLog } from '@/utils/logger'
 import { Capacitor } from '@capacitor/core'
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
+import { getStorageInfo, requestPersistentStorage, isStoragePersisted, formatBytes } from '@/utils/storage'
+import type { StorageInfo } from '@/utils/storage'
 
 const settings = useSettingsStore()
+
+const isWeb = !Capacitor.isNativePlatform()
 
 const form = reactive({
   baseUrl: '',
@@ -76,6 +80,22 @@ onMounted(async () => {
   form.narrationMin = settings.config.narrationMin ?? 200
   form.narrationMax = settings.config.narrationMax ?? 500
   devMode.value = settings.devMode
+
+  // PWA 端：申请持久化存储并展示用量，降低浏览器自动清理丢失存档的概率
+  if (isWeb) {
+    if (!(await isStoragePersisted())) {
+      await requestPersistentStorage()
+    }
+    storageInfo.value = await getStorageInfo()
+  }
+})
+
+const storageInfo = ref<StorageInfo | null>(null)
+
+const storageRatio = computed(() => {
+  const info = storageInfo.value
+  if (!info || !info.quota) return 0
+  return Math.min(100, Math.round((info.usage / info.quota) * 100))
 })
 
 async function save() {
@@ -292,6 +312,25 @@ async function doClearLog() {
       </p>
     </section>
 
+    <section v-if="isWeb && storageInfo" class="block storage-block">
+      <h3 class="block-title">存储状态</h3>
+      <div class="storage-bar">
+        <div class="storage-bar-track">
+          <div class="storage-bar-fill" :style="{ width: storageRatio + '%' }" />
+        </div>
+        <span class="storage-bar-pct">{{ storageRatio }}%</span>
+      </div>
+      <p class="storage-detail">
+        已用 {{ formatBytes(storageInfo.usage) }} / 配额 {{ formatBytes(storageInfo.quota) }}
+      </p>
+      <p class="storage-status" :class="{ persisted: storageInfo.persisted }">
+        {{ storageInfo.persisted ? '✓ 已申请持久化存储，存档不易被浏览器自动清理' : '⚠ 未获得持久化配额，浏览器可能自动清理存档' }}
+      </p>
+      <p class="storage-tip">
+        提示：将本页"添加到主屏幕"可获得更可靠的持久化保护。仍可在浏览器设置中手动清除站点数据。
+      </p>
+    </section>
+
     <footer class="footer">
       <p>本游戏由 @猎梦人 创作</p>
       <p>问题/建议欢迎加入QQ群1125851038反馈</p>
@@ -438,6 +477,52 @@ async function doClearLog() {
   font-size: 12px;
   line-height: 1.6;
   margin-top: 14px;
+}
+.storage-block {
+  margin-top: 16px;
+}
+.storage-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.storage-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.storage-bar-fill {
+  height: 100%;
+  background: var(--active);
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+.storage-bar-pct {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 36px;
+  text-align: right;
+}
+.storage-detail {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.storage-status {
+  font-size: 13px;
+  margin-top: 8px;
+  color: #f59e0b;
+}
+.storage-status.persisted {
+  color: #4ade80;
+}
+.storage-tip {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 6px;
 }
 .footer {
   margin-top: 28px;
