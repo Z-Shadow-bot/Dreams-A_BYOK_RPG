@@ -179,27 +179,55 @@ export async function chat(messages: ChatMessage[], config: APIConfig): Promise<
 
   const startedAt = Date.now()
   console.log(`[ai] chat开始: model=${config.model} url=${url} msgs=${messages.length} readTimeout=${readTimeout}ms`)
-  let response: Awaited<ReturnType<typeof CapacitorHttp.post>>
+  // 监听前后台切换：Android 在 App 挂后台时可能暂停 WebView 并中断进行中的网络请求，
+  // 回到前台后请求会以"连接被中止"类错误失败。此时应自动重试一次，而非让用户手动重试。
+  let wentBackground = false
+  const onVisibility = () => {
+    if (document.hidden) wentBackground = true
+  }
+  document.addEventListener('visibilitychange', onVisibility)
+  let response!: Awaited<ReturnType<typeof CapacitorHttp.post>>
+  const doPost = () => CapacitorHttp.post({
+    url,
+    headers,
+    data: JSON.stringify(payload),
+    responseType: 'json',
+    connectTimeout,
+    readTimeout,
+  })
   try {
-    response = await CapacitorHttp.post({
-      url,
-      headers,
-      data: JSON.stringify(payload),
-      responseType: 'json',
-      connectTimeout,
-      readTimeout,
-    })
+    response = await doPost()
   } catch (e) {
     const elapsed = Math.round((Date.now() - startedAt) / 1000)
     const raw = e instanceof Error ? e.message : String(e)
     console.error(`[ai] chat异常: elapsed=${elapsed}s raw=${raw}`)
-    if (/timeout|timed\s*out|socket.?timeout/i.test(raw)) {
+    if (wentBackground && !document.hidden) {
+      // 请求期间进入过后台，且现已回到前台：判定为系统中断连接，自动重试
+      console.log(`[ai] 请求期间应用进入后台导致连接中断，页面已恢复，自动重试 raw=${raw}`)
+      try {
+        response = await doPost()
+        console.log(`[ai] 后台中断后重试成功: elapsed=${Math.round((Date.now() - startedAt) / 1000)}s`)
+      } catch (e2) {
+        const raw2 = e2 instanceof Error ? e2.message : String(e2)
+        console.error(`[ai] 重试也失败: raw=${raw2}`)
+        if (/timeout|timed\s*out|socket.?timeout/i.test(raw2)) {
+          throw new AIError(
+            `AI 响应超时（已等待 ${Math.round((Date.now() - startedAt) / 1000)} 秒）：设定较长或服务繁忙，请稍后重试，或延长「最大等待时间」`,
+            `readTimeout=${readTimeout}ms`,
+          )
+        }
+        throw new AIError('网络连接失败，请检查网络和 API 地址是否正确后重试', raw2)
+      }
+    } else if (/timeout|timed\s*out|socket.?timeout/i.test(raw)) {
       throw new AIError(
         `AI 响应超时（已等待 ${elapsed} 秒）：设定较长或服务繁忙，请稍后重试，或延长「最大等待时间」`,
         `readTimeout=${readTimeout}ms`,
       )
+    } else {
+      throw new AIError('网络连接失败，请检查网络和 API 地址是否正确后重试', raw)
     }
-    throw new AIError('网络连接失败，请检查网络和 API 地址是否正确后重试', raw)
+  } finally {
+    document.removeEventListener('visibilitychange', onVisibility)
   }
 
   if (response.status < 200 || response.status >= 300) {

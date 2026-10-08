@@ -62,6 +62,12 @@ const currentScene = computed(() => {
   return typeof v === 'string' ? v : v != null ? String(v) : undefined
 })
 
+// DLC 世界的 BGM 映射为空（通常是旧版本导入所致），提示用户重新导入 DLC
+const bgmMissing = computed(() => {
+  const w = worldStore.currentWorld
+  return !!(w?.dlcId && w.bgm && Object.keys(w.bgm).length === 0)
+})
+
 const presetCharacters = computed(() => worldStore.currentWorld?.presetCharacters ?? [])
 const selectedPreset = ref('')
 const hiddenPreset = ref<string | undefined>(undefined)
@@ -259,6 +265,9 @@ async function rollback() {
       <button v-else class="to-latest" @click="goLatest">回到最新 →</button>
     </template>
 
+    <div v-if="bgmMissing" class="bgm-missing-row">
+      <span class="bgm-missing">⚠ 该世界的背景音乐未加载（旧版本导入所致）。请在「世界」页重新导入 DLC，选择「更新现有世界」即可修复。</span>
+    </div>
     <div v-if="adventure.error" class="error-row">
       <span class="error">⚠ {{ adventure.error }}</span>
       <button class="retry-btn" @click="adventure.retry()">重试</button>
@@ -498,8 +507,16 @@ async function rollback() {
 .error-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   margin-top: 12px;
+}
+.bgm-missing-row {
+  margin-top: 12px;
+}
+.bgm-missing {
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
 }
 .error {
   color: var(--danger);
