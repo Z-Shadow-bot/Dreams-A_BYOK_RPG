@@ -1,5 +1,6 @@
 import { CapacitorHttp } from '@capacitor/core'
 import { getApiKey } from './secure'
+import { startKeepAlive, stopKeepAlive } from '@/utils/keepalive'
 import type { APIConfig, ChatMessage } from '@/types'
 
 // 归一化 OpenAI 兼容接口地址
@@ -179,96 +180,102 @@ export async function chat(messages: ChatMessage[], config: APIConfig): Promise<
 
   const startedAt = Date.now()
   console.log(`[ai] chat开始: model=${config.model} url=${url} msgs=${messages.length} readTimeout=${readTimeout}ms`)
-  // 监听前后台切换：Android 在 App 挂后台时可能暂停 WebView 并中断进行中的网络请求，
-  // 回到前台后请求会以"连接被中止"类错误失败。此时应自动重试一次，而非让用户手动重试。
-  let wentBackground = false
-  const onVisibility = () => {
-    if (document.hidden) wentBackground = true
-  }
-  document.addEventListener('visibilitychange', onVisibility)
-  let response!: Awaited<ReturnType<typeof CapacitorHttp.post>>
-  const doPost = () => CapacitorHttp.post({
-    url,
-    headers,
-    data: JSON.stringify(payload),
-    responseType: 'json',
-    connectTimeout,
-    readTimeout,
-  })
+  // 请求期间启动前台服务保活：避免 App 挂后台时进程被系统冻结导致网络连接中断
+  await startKeepAlive()
   try {
-    response = await doPost()
-  } catch (e) {
-    const elapsed = Math.round((Date.now() - startedAt) / 1000)
-    const raw = e instanceof Error ? e.message : String(e)
-    console.error(`[ai] chat异常: elapsed=${elapsed}s raw=${raw}`)
-    if (wentBackground && !document.hidden) {
-      // 请求期间进入过后台，且现已回到前台：判定为系统中断连接，自动重试
-      console.log(`[ai] 请求期间应用进入后台导致连接中断，页面已恢复，自动重试 raw=${raw}`)
-      try {
-        response = await doPost()
-        console.log(`[ai] 后台中断后重试成功: elapsed=${Math.round((Date.now() - startedAt) / 1000)}s`)
-      } catch (e2) {
-        const raw2 = e2 instanceof Error ? e2.message : String(e2)
-        console.error(`[ai] 重试也失败: raw=${raw2}`)
-        if (/timeout|timed\s*out|socket.?timeout/i.test(raw2)) {
-          throw new AIError(
-            `AI 响应超时（已等待 ${Math.round((Date.now() - startedAt) / 1000)} 秒）：设定较长或服务繁忙，请稍后重试，或延长「最大等待时间」`,
-            `readTimeout=${readTimeout}ms`,
-          )
-        }
-        throw new AIError('网络连接失败，请检查网络和 API 地址是否正确后重试', raw2)
-      }
-    } else if (/timeout|timed\s*out|socket.?timeout/i.test(raw)) {
-      throw new AIError(
-        `AI 响应超时（已等待 ${elapsed} 秒）：设定较长或服务繁忙，请稍后重试，或延长「最大等待时间」`,
-        `readTimeout=${readTimeout}ms`,
-      )
-    } else {
-      throw new AIError('网络连接失败，请检查网络和 API 地址是否正确后重试', raw)
+    // 监听前后台切换：Android 在 App 挂后台时可能暂停 WebView 并中断进行中的网络请求，
+    // 回到前台后请求会以"连接被中止"类错误失败。此时应自动重试一次，而非让用户手动重试。
+    let wentBackground = false
+    const onVisibility = () => {
+      if (document.hidden) wentBackground = true
     }
-  } finally {
-    document.removeEventListener('visibilitychange', onVisibility)
-  }
-
-  if (response.status < 200 || response.status >= 300) {
-    let errBody = ''
+    document.addEventListener('visibilitychange', onVisibility)
+    let response!: Awaited<ReturnType<typeof CapacitorHttp.post>>
+    const doPost = () => CapacitorHttp.post({
+      url,
+      headers,
+      data: JSON.stringify(payload),
+      responseType: 'json',
+      connectTimeout,
+      readTimeout,
+    })
     try {
-      errBody = JSON.stringify(response.data)
-    } catch {
-      errBody = String(response.data)
+      response = await doPost()
+    } catch (e) {
+      const elapsed = Math.round((Date.now() - startedAt) / 1000)
+      const raw = e instanceof Error ? e.message : String(e)
+      console.error(`[ai] chat异常: elapsed=${elapsed}s raw=${raw}`)
+      if (wentBackground && !document.hidden) {
+        // 请求期间进入过后台，且现已回到前台：判定为系统中断连接，自动重试
+        console.log(`[ai] 请求期间应用进入后台导致连接中断，页面已恢复，自动重试 raw=${raw}`)
+        try {
+          response = await doPost()
+          console.log(`[ai] 后台中断后重试成功: elapsed=${Math.round((Date.now() - startedAt) / 1000)}s`)
+        } catch (e2) {
+          const raw2 = e2 instanceof Error ? e2.message : String(e2)
+          console.error(`[ai] 重试也失败: raw=${raw2}`)
+          if (/timeout|timed\s*out|socket.?timeout/i.test(raw2)) {
+            throw new AIError(
+              `AI 响应超时（已等待 ${Math.round((Date.now() - startedAt) / 1000)} 秒）：设定较长或服务繁忙，请稍后重试，或延长「最大等待时间」`,
+              `readTimeout=${readTimeout}ms`,
+            )
+          }
+          throw new AIError('网络连接失败，请检查网络和 API 地址是否正确后重试', raw2)
+        }
+      } else if (/timeout|timed\s*out|socket.?timeout/i.test(raw)) {
+        throw new AIError(
+          `AI 响应超时（已等待 ${elapsed} 秒）：设定较长或服务繁忙，请稍后重试，或延长「最大等待时间」`,
+          `readTimeout=${readTimeout}ms`,
+        )
+      } else {
+        throw new AIError('网络连接失败，请检查网络和 API 地址是否正确后重试', raw)
+      }
+    } finally {
+      document.removeEventListener('visibilitychange', onVisibility)
     }
-    if (errBody.length > 500) errBody = errBody.slice(0, 500) + '…'
-    throw new AIError(httpErrorHint(response.status), `HTTP ${response.status}：${errBody}`)
-  }
 
-  const data = response.data as {
-    choices?: Array<{
-      message?: { content?: string }
-      finish_reason?: string
-    }>
-    error?: { message?: string }
+    if (response.status < 200 || response.status >= 300) {
+      let errBody = ''
+      try {
+        errBody = JSON.stringify(response.data)
+      } catch {
+        errBody = String(response.data)
+      }
+      if (errBody.length > 500) errBody = errBody.slice(0, 500) + '…'
+      throw new AIError(httpErrorHint(response.status), `HTTP ${response.status}：${errBody}`)
+    }
+
+    const data = response.data as {
+      choices?: Array<{
+        message?: { content?: string }
+        finish_reason?: string
+      }>
+      error?: { message?: string }
+    }
+    if (data.error) {
+      throw new AIError(
+        'AI 服务返回错误，请检查配置或稍后重试',
+        `data.error：${JSON.stringify(data.error)}`,
+      )
+    }
+    const choice = data?.choices?.[0]
+    const msg = choice?.message
+    const content = msg?.content?.trim()
+    if (!content) {
+      throw new AIError(
+        'AI 没有返回内容，可能是被内容安全策略拦截或模型异常，请稍后重试或更换模型',
+        `choices 为空或 content 为空（finish_reason=${choice?.finish_reason ?? '无'}）`,
+      )
+    }
+    if (choice?.finish_reason === 'length') {
+      throw new AIError(
+        'AI 的输出超出了模型自身上限而被截断，建议重试，或更换上下文更长的模型',
+        'finish_reason=length',
+      )
+    }
+    console.log(`[ai] chat完成: elapsed=${Math.round((Date.now() - startedAt) / 1000)}s len=${content.length}`)
+    return content
+  } finally {
+    await stopKeepAlive()
   }
-  if (data.error) {
-    throw new AIError(
-      'AI 服务返回错误，请检查配置或稍后重试',
-      `data.error：${JSON.stringify(data.error)}`,
-    )
-  }
-  const choice = data?.choices?.[0]
-  const msg = choice?.message
-  const content = msg?.content?.trim()
-  if (!content) {
-    throw new AIError(
-      'AI 没有返回内容，可能是被内容安全策略拦截或模型异常，请稍后重试或更换模型',
-      `choices 为空或 content 为空（finish_reason=${choice?.finish_reason ?? '无'}）`,
-    )
-  }
-  if (choice?.finish_reason === 'length') {
-    throw new AIError(
-      'AI 的输出超出了模型自身上限而被截断，建议重试，或更换上下文更长的模型',
-      'finish_reason=length',
-    )
-  }
-  console.log(`[ai] chat完成: elapsed=${Math.round((Date.now() - startedAt) / 1000)}s len=${content.length}`)
-  return content
 }
