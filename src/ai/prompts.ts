@@ -56,7 +56,7 @@ export function buildGlobalRules(narrationMin: number, narrationMax: number): st
 // ===== 输出格式约束 =====
 export function buildOutputFormat(narrationMin: number, narrationMax: number): string {
   return `# 输出格式（强制）
-你必须且只能输出一个 JSON 对象，不得包含任何 JSON 之外的文字、解释或 Markdown 代码块标记。JSON 结构如下：
+你必须且只能输出一个标准的 JSON 对象，不得包含任何 JSON 之外的文字、解释、前言后语或 Markdown 代码块标记（不要用 \`\`\` 包裹）。JSON 结构如下：
 
 {
   "narration": "场景描写+玩家行动结果+世界反应（${narrationMin}-${narrationMax}字，第二人称'你'）",
@@ -64,6 +64,15 @@ export function buildOutputFormat(narrationMin: number, narrationMax: number): s
   "save": { ...下面"存档结构"定义的完整存档对象... },
   "loreUpdates": [ { "title": "条目标题", "tags": ["标签","标签"], "content": "条目正文", "required": false } ]
 }
+
+JSON 语法硬性要求（违反任一条都会导致解析失败）：
+- 所有键名必须用英文双引号包裹：如 "narration"、"options"、"save"。
+- 所有字符串值必须用英文双引号包裹，不要使用单引号或中文引号。
+- 字符串内部的换行必须写成 \\n 转义序列，不要直接换行；正文中若出现英文双引号必须写成 \\"。
+- 键与值之间必须有冒号，元素与元素之间必须有逗号，最后一项后面不得有逗号。
+- 不要使用任何注释（//、/* */）。
+- 不要截断 JSON：宁可把 narration 写得短一些，也必须保证 JSON 完整闭合。
+- 不要输出多个 JSON 或把 JSON 包在别的文本里。
 
 注意：
 - options 给出的 2-3 个选项仅为参考建议，玩家可无视或自由输入；你必须始终按玩家的真实输入推进，选项不得变成"三条预设轨道"。

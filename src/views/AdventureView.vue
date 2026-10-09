@@ -32,7 +32,8 @@ const isLatest = computed(
 
 const readerBody = ref<HTMLElement | null>(null)
 watch(currentPage, () => {
-  if (readerBody.value) readerBody.value.scrollTop = 0
+  const scroller = readerBody.value?.closest('.app-main') ?? document.scrollingElement
+  if (scroller) scroller.scrollTop = 0
 }, { flush: 'post' })
 
 const loadingSeconds = ref(0)
@@ -408,20 +409,33 @@ async function rollback() {
 }
 .reader {
   display: flex;
-  align-items: stretch;
-  gap: 8px;
   flex: 1;
+  min-height: 0;
 }
 .nav {
-  flex: none;
-  width: 36px;
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 60;
+  width: 34px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 18px;
   font-size: 22px;
-  align-self: center;
-  padding: 20px 0;
+  padding: 0;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  opacity: 0.9;
+}
+.nav.prev {
+  left: 6px;
+}
+.nav.next {
+  right: 6px;
 }
 .nav:disabled {
   opacity: 0.2;
@@ -429,6 +443,7 @@ async function rollback() {
 .reader-body {
   flex: 1;
   min-width: 0;
+  padding: 0 42px;
 }
 .ai-notice {
   color: var(--muted);

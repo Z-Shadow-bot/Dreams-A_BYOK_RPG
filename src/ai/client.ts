@@ -88,7 +88,38 @@ function fixBareControlInStrings(json: string): string {
   return result
 }
 
-// 从 AI 返回文本中提取 JSON 对象（容错处理 ```json 代码块 / 前后杂文 / 裸控制字符）
+// 去除 JSON 中字符串外的注释（// 与 /* */）并修复尾逗号；按引号状态扫描，不误伤字符串内的内容
+function repairJsonText(json: string): string {
+  let s = json.replace(/,(\s*[}\]])/g, '$1')
+  let out = ''
+  let inString = false
+  let escape = false
+  const n = s.length
+  for (let i = 0; i < n; i++) {
+    const ch = s[i]
+    if (inString) {
+      out += ch
+      if (escape) escape = false
+      else if (ch === '\\') escape = true
+      else if (ch === '"') inString = false
+    } else if (ch === '"') {
+      inString = true
+      out += ch
+    } else if (ch === '/' && s[i + 1] === '/') {
+      while (i < n && s[i] !== '\n' && s[i] !== '\r') i++
+      out += '\n'
+    } else if (ch === '/' && s[i + 1] === '*') {
+      const end = s.indexOf('*/', i + 2)
+      i = end === -1 ? n : end + 1
+      out += ' '
+    } else {
+      out += ch
+    }
+  }
+  return out
+}
+
+// 从 AI 返回文本中提取 JSON 对象（容错处理 ```json 代码块 / 前后杂文 / 裸控制字符 / 注释 / 尾逗号）
 export function extractJson(text: string): unknown {
   const trimmed = text.trim()
   // 去掉 markdown 代码块包裹
@@ -130,11 +161,17 @@ export function extractJson(text: string): unknown {
               const fixed = fixBareControlInStrings(slice)
               try {
                 return JSON.parse(fixed)
-              } catch (e2) {
-                throw new AIError(
-                  'AI 返回的 JSON 格式有误，请重试一次；若反复出现，请尝试更换模型',
-                  `解析错误：${e2 instanceof Error ? e2.message : String(e2)}\n内容前 200 字符：${slice.slice(0, 200)}`,
-                )
+              } catch {
+                // 再尝试去除注释、修复尾逗号
+                const repaired = repairJsonText(fixed)
+                try {
+                  return JSON.parse(repaired)
+                } catch (e2) {
+                  throw new AIError(
+                    'AI 返回的 JSON 格式有误，请重试一次；若反复出现，请尝试更换模型',
+                    `解析错误：${e2 instanceof Error ? e2.message : String(e2)}\n内容前 200 字符：${fixed.slice(0, 200)}`,
+                  )
+                }
               }
             }
           }
