@@ -14,10 +14,12 @@ export function normalizeBaseUrl(baseUrl: string): string {
 // AI 调用错误：message 为面向用户的中文提示，detail 为开发者诊断信息（开发者模式才展示）
 export class AIError extends Error {
   detail?: string
-  constructor(message: string, detail?: string) {
+  truncated?: boolean // 是否为输出被截断（可触发自动降级重试）
+  constructor(message: string, detail?: string, truncated?: boolean) {
     super(message)
     this.name = 'AIError'
     this.detail = detail
+    this.truncated = truncated
   }
 }
 
@@ -181,6 +183,7 @@ export function extractJson(text: string): unknown {
     throw new AIError(
       'AI 的输出被截断了，请重试，或更换上下文更长的模型',
       `内容前 200 字符：${body.slice(0, 200)}`,
+      true,
     )
   }
 }
@@ -306,8 +309,9 @@ export async function chat(messages: ChatMessage[], config: APIConfig): Promise<
     }
     if (choice?.finish_reason === 'length') {
       throw new AIError(
-        'AI 的输出超出了模型自身上限而被截断，建议重试，或更换上下文更长的模型',
+        'AI 的输出超出了模型自身上限而被截断，即将自动重试',
         'finish_reason=length',
+        true,
       )
     }
     console.log(`[ai] chat完成: elapsed=${Math.round((Date.now() - startedAt) / 1000)}s len=${content.length}`)

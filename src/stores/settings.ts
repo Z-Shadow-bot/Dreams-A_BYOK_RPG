@@ -7,6 +7,8 @@ const CONFIG_KEY = 'api_config'
 const DEV_MODE_KEY = 'dev_mode'
 const BGM_MUTED_KEY = 'bgm_muted'
 const BAG_DETAIL_KEY = 'bag_detail'
+const TRUNCATE_STRATEGY_KEY = 'truncate_strategy'
+const FAST_FORWARD_KEY = 'fast_forward'
 
 const DEFAULT_CONFIG: APIConfig = {
   baseUrl: '',
@@ -18,6 +20,8 @@ const DEFAULT_CONFIG: APIConfig = {
   narrationMax: 500,
 }
 
+export type TruncateStrategy = 'diff' | 'split'
+
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
     config: { ...DEFAULT_CONFIG } as APIConfig,
@@ -26,6 +30,8 @@ export const useSettingsStore = defineStore('settings', {
     devMode: false,
     muted: false,
     detailedBag: false, // 精细化背包描述：对物品生成更精细的 state 描述
+    truncateStrategy: 'diff' as TruncateStrategy, // 输出截断自动重试策略：diff 精简修改指令 / split 拆分输出
+    fastForward: false, // 快速推进叙事：省略无关细节，直接推进主线
   }),
   actions: {
     async load() {
@@ -58,6 +64,18 @@ export const useSettingsStore = defineStore('settings', {
         this.detailedBag = !!d
       } catch {
         this.detailedBag = false
+      }
+      try {
+        const s = await getSetting<string>(TRUNCATE_STRATEGY_KEY)
+        this.truncateStrategy = s === 'split' ? 'split' : 'diff'
+      } catch {
+        this.truncateStrategy = 'diff'
+      }
+      try {
+        const f = await getSetting<boolean>(FAST_FORWARD_KEY)
+        this.fastForward = !!f
+      } catch {
+        this.fastForward = false
       }
       this.loaded = true
     },
@@ -94,6 +112,22 @@ export const useSettingsStore = defineStore('settings', {
       this.detailedBag = v
       try {
         await putSetting(BAG_DETAIL_KEY, v)
+      } catch {
+        // 保存失败不阻塞开关生效
+      }
+    },
+    async setTruncateStrategy(v: TruncateStrategy) {
+      this.truncateStrategy = v
+      try {
+        await putSetting(TRUNCATE_STRATEGY_KEY, v)
+      } catch {
+        // 保存失败不阻塞设置生效
+      }
+    },
+    async setFastForward(v: boolean) {
+      this.fastForward = v
+      try {
+        await putSetting(FAST_FORWARD_KEY, v)
       } catch {
         // 保存失败不阻塞开关生效
       }

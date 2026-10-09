@@ -5,7 +5,11 @@ import {
   buildActionPrompt,
   buildCharacterGenPrompt,
   buildWorldGenPrompt,
+  buildActionRecoveryDiffPrompt,
+  buildActionRecoverySplitNarrationPrompt,
+  buildActionRecoverySplitSavePrompt,
 } from './prompts'
+import { useSettingsStore } from '@/stores/settings'
 import type {
   APIConfig,
   AIResponse,
@@ -212,23 +216,153 @@ export async function generateAction(
   lastNarration: string | undefined,
   config: APIConfig,
   detailedBag: boolean = false,
+  fastForward: boolean = false,
+  onRecoverStart?: () => void,
 ): Promise<AIResponse> {
   const { min, max } = narrationRange(config)
-  const content = await chat(
+  const system = buildActionSystemPrompt(min, max, world, detailedBag)
+  try {
+    const content = await chat(
+      [
+        { role: 'system', content: system },
+        {
+          role: 'user',
+          content: buildActionPrompt(world, currentSave, userInput, lastNarration, fastForward),
+        },
+      ],
+      config,
+    )
+    const data = extractJson(content) as Record<string, any>
+    return {
+      narration: typeof data.narration === 'string' ? data.narration : '',
+      options: normalizeOptions(data.options),
+      save: normalizeSave(data.save, world.panelSchema),
+      loreUpdates: normalizeLorebook(data.loreUpdates),
+    }
+  } catch (e) {
+    if (e instanceof AIError && e.truncated) {
+      // 输出被截断：按用户设置的策略自动降级重试，避免再次截断
+      onRecoverStart?.()
+      return recoverAction(world, currentSave, userInput, lastNarration, config, detailedBag, fastForward)
+    }
+    throw e
+  }
+}
+
+// 将 patchSave 修改指令应用到现有存档上（只改列出的字段，数组字段整体替换）
+export function applySavePatch(base: SaveData, patch: unknown): SaveData {
+  const out: SaveData = JSON.parse(JSON.stringify(base)) as SaveData
+  const p = (patch ?? {}) as Record<string, any>
+  if (p.panel && typeof p.panel === 'object' && !Array.isArray(p.panel)) {
+    for (const [k, v] of Object.entries(p.panel)) {
+      if (typeof v === 'string' || typeof v === 'number') {
+        (out.panel as Record<string, string | number>)[k] = v
+      }
+    }
+  }
+  if (typeof p.characterProfile === 'string') out.characterProfile = p.characterProfile
+  if (typeof p.worldTime === 'string') out.worldTime = p.worldTime
+  if (p.overview && typeof p.overview === 'object' && !Array.isArray(p.overview)) {
+    const o = p.overview as Record<string, unknown>
+    if (typeof o.impression === 'string') out.overview.impression = o.impression
+    if (typeof o.ongoing === 'string') out.overview.ongoing = o.ongoing
+    if (Array.isArray(o.recentEvents)) {
+      out.overview.recentEvents = o.recentEvents.filter((x): x is string => typeof x === 'string')
+    }
+    if (typeof o.latestProgress === 'string') out.overview.latestProgress = o.latestProgress
+  }
+  if (p.inventory && typeof p.inventory === 'object' && !Array.isArray(p.inventory)) {
+    const inv = p.inventory as Record<string, unknown>
+    if (Array.isArray(inv.equipment)) out.inventory.equipment = inv.equipment.map(normalizeItem)
+    if (Array.isArray(inv.items)) out.inventory.items = inv.items.map(normalizeItem)
+  }
+  if (Array.isArray(p.map)) out.map = p.map.map(normalizeLocation)
+  if (Array.isArray(p.characters)) out.characters = p.characters.map(normalizeCharacter)
+  if (p.hidden && typeof p.hidden === 'object' && !Array.isArray(p.hidden)) {
+    const h = p.hidden as Record<string, any>
+    if (h.add && typeof h.add === 'object' && !Array.isArray(h.add)) {
+      for (const [k, v] of Object.entries(h.add as Record<string, unknown>)) {
+        if (typeof v === 'string') out.hidden[k] = v
+        else if (v !== undefined && v !== null) {
+          try {
+            out.hidden[k] = JSON.stringify(v)
+          } catch {
+            // 不可序列化的值忽略
+          }
+        }
+      }
+    }
+    if (Array.isArray(h.remove)) {
+      for (const k of h.remove) {
+        if (typeof k === 'string') delete out.hidden[k]
+      }
+    }
+  }
+  return out
+}
+
+// 截断后的降级重试：diff（精简修改指令）或 split（拆分两次请求）
+async function recoverAction(
+  world: World,
+  currentSave: SaveData,
+  userInput: string,
+  lastNarration: string | undefined,
+  config: APIConfig,
+  detailedBag: boolean,
+  fastForward: boolean,
+): Promise<AIResponse> {
+  const { min, max } = narrationRange(config)
+  const system = buildActionSystemPrompt(min, max, world, detailedBag)
+  const strategy = useSettingsStore().truncateStrategy
+  if (strategy === 'diff') {
+    const content = await chat(
+      [
+        { role: 'system', content: system },
+        {
+          role: 'user',
+          content: buildActionRecoveryDiffPrompt(world, currentSave, userInput, lastNarration, fastForward),
+        },
+      ],
+      config,
+    )
+    const data = extractJson(content) as Record<string, any>
+    const patched = applySavePatch(currentSave, data.patchSave)
+    return {
+      narration: typeof data.narration === 'string' ? data.narration : '',
+      options: normalizeOptions(data.options),
+      save: normalizeSave(patched, world.panelSchema),
+      loreUpdates: normalizeLorebook(data.loreUpdates),
+    }
+  }
+  // split：第 1 次生成叙事与选项，第 2 次生成完整存档
+  const p1 = await chat(
     [
-      { role: 'system', content: buildActionSystemPrompt(min, max, world, detailedBag) },
+      { role: 'system', content: system },
       {
         role: 'user',
-        content: buildActionPrompt(world, currentSave, userInput, lastNarration),
+        content: buildActionRecoverySplitNarrationPrompt(world, currentSave, userInput, lastNarration, fastForward),
       },
     ],
     config,
   )
-  const data = extractJson(content) as Record<string, any>
+  const d1 = extractJson(p1) as Record<string, any>
+  const narration = typeof d1.narration === 'string' ? d1.narration : ''
+  const options = normalizeOptions(d1.options)
+  const p2 = await chat(
+    [
+      { role: 'system', content: system },
+      {
+        role: 'user',
+        content: buildActionRecoverySplitSavePrompt(world, currentSave, narration || '（本轮未生成叙事）', userInput),
+      },
+    ],
+    config,
+  )
+  const d2 = extractJson(p2) as Record<string, any>
   return {
-    narration: typeof data.narration === 'string' ? data.narration : '',
-    options: normalizeOptions(data.options),
-    save: normalizeSave(data.save, world.panelSchema),
-    loreUpdates: normalizeLorebook(data.loreUpdates),
+    narration,
+    options,
+    save: normalizeSave(d2.save, world.panelSchema),
+    loreUpdates: normalizeLorebook(d2.loreUpdates),
   }
 }

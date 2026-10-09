@@ -92,6 +92,7 @@ export const useAdventureStore = defineStore('adventure', {
       currentIndex: number
       lorebook: LoreEntry[] | null
     },
+    recoveryNote: null as string | null, // 截断自动降级时展示的提示文案
   }),
   getters: {
     hasAdventure(state): boolean {
@@ -191,6 +192,7 @@ export const useAdventureStore = defineStore('adventure', {
       this.pendingRetry = null
       this.loading = true
       this.error = null
+      this.recoveryNote = null
       savePendingRequest({ worldId, mode: 'start', input: characterInput, opts, hiddenPreset, startedAt: Date.now() })
       try {
         let actualInput = characterInput
@@ -274,19 +276,25 @@ export const useAdventureStore = defineStore('adventure', {
       }
       this.loading = true
       this.error = null
+      this.recoveryNote = null
       savePendingRequest({ worldId, mode: 'action', input, startedAt: Date.now() })
       try {
         const lastNarration = this.pages.length > 0
           ? this.pages[this.pages.length - 1].narration
           : undefined
         const config = useSettingsStore().config
+        const s = useSettingsStore()
         const result = await generateAction(
           world,
           this.currentSave,
           input,
           lastNarration,
           config,
-          useSettingsStore().detailedBag,
+          s.detailedBag,
+          s.fastForward,
+          () => {
+            this.recoveryNote = '文本较长，正在优化生成方式，请稍候…'
+          },
         )
         if (this.worldId !== worldId) return
         // 彩蛋角色出场检测：检查 hidden lorebook 条目对应的角色是否出现在 characters 里
@@ -330,6 +338,7 @@ export const useAdventureStore = defineStore('adventure', {
         this.pendingRetry = null
       } finally {
         this.loading = false
+        this.recoveryNote = null
         clearPendingRequest()
       }
     },
@@ -398,6 +407,7 @@ export const useAdventureStore = defineStore('adventure', {
       this.lastHiddenPreset = null
       this.eggBgmPending = null
       this.pendingRetry = null
+      this.recoveryNote = null
       this.draftInput = ''
       this.error = null
     },

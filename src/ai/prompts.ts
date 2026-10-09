@@ -30,8 +30,7 @@ export function buildGlobalRules(narrationMin: number, narrationMax: number): st
 - 禁止出现"其实他心里想的是""对方背后的势力是"这类玩家无法获知的信息。
 
 # 三、NPC 与世界逻辑
-- NPC 有独立动机和日程，不围着玩家转。
-- 选择有后果：玩家的行为会改变世界、NPC 态度、任务走向。
+
 - 节奏缓慢真实，不能过于跳跃。
 
 # 四、叙事与交互格式
@@ -170,20 +169,39 @@ export function bagDetailRule(enabled: boolean): string {
 }
 
 // 根据"上下文文本"挑出本轮该注入的世界书条目并组装注入区文本；无世界书时返回空串
-// sceneValue：当前场景值（如 panel[sceneField]），精确匹配 tags 的条目获得更高优先级
+// sceneValue：当前场景值（如 panel[sceneField]），tags 与场景值精确相等优先，其次双向包含
+// 上下文匹配：标签在上下文中出现的次数越多相关度越高（次数加权）
 export function buildLoreInjection(world: World, context: string, sceneValue?: string): string {
   const entries = world.lorebook ?? []
   if (entries.length === 0) return ''
   const scene = (sceneValue ?? '').trim()
+  const ctx = context || ''
   const scored: Array<{ e: LoreEntry; rank: number }> = []
   for (const e of entries) {
     const content = (e.content ?? '').trim()
     if (!content) continue
     const tags = Array.isArray(e.tags) ? e.tags.filter((t) => typeof t === 'string' && t.trim()) : []
-    let rank = 3 // 默认：无命中
-    if (e.required) rank = 0 // 铁律必带
-    else if (scene && tags.some((t) => t.trim() === scene)) rank = 1 // 场景精确匹配
-    else if (tags.some((t) => context.includes(t.trim()))) rank = 2 // 标签子串命中
+    let rank: number
+    if (e.required) {
+      rank = 0 // 铁律必带
+    } else if (scene) {
+      const exact = tags.some((t) => t.trim() === scene)
+      let broad = false
+      if (!exact) {
+        for (const t of tags) {
+          const tag = t.trim()
+          if (tag && tag !== scene && (scene.includes(tag) || tag.includes(scene))) {
+            broad = true
+            break
+          }
+        }
+      }
+      if (exact) rank = 1 // 场景精确匹配
+      else if (broad) rank = 1.5 // 场景双向包含（如场景"幽暗森林"命中标签"森林"）
+      else rank = tagHitRank(ctx, tags) // 场景不命中，回退到上下文匹配
+    } else {
+      rank = tagHitRank(ctx, tags) // 无场景值，仅做上下文匹配
+    }
     scored.push({ e, rank })
   }
   scored.sort((a, b) => a.rank - b.rank)
@@ -226,6 +244,27 @@ ${lines.join('\n')}
 - 当玩家时隔较久重返旧地点或重遇旧人物时，应先根据已流逝的时间（参考存档 worldTime 与剧情上下文）对该世界书条目做合理演化——地点可能兴衰变化、人物可能因独立日程而离开或改变，不会停在原地等待——再据此读取与呈现；演化结果同时通过 loreUpdates 更新到世界书，并同步到存档 map/characters。
 - 标注"隐藏·彩蛋"的条目是尚未出场的彩蛋角色/设定：不要主动让该角色出场，只在剧情自然发展遇到合理条件时（如旅途偶遇、城镇擦肩、任务交集）才让她出场；出场后通过 loreUpdates 更新该条目并移除 hidden 标记（在返回的条目中设 hidden 为 false 或省略），此后按普通世界书条目处理。
 - loreUpdates 仅在确实有更新时返回，否则返回空数组 []。`
+}
+
+// 上下文标签匹配：统计每个标签在上下文中出现的次数，命中次数越多 rank 越小（越靠前）；
+// 未命中返回 3（默认档）
+function tagHitRank(ctx: string, tags: string[]): number {
+  let hitCount = 0
+  for (const t of tags) {
+    const tag = t.trim()
+    if (!tag || !ctx.includes(tag)) continue
+    hitCount++
+    let count = 0
+    let p = 0
+    while ((p = ctx.indexOf(tag, p)) !== -1) {
+      count++
+      p += tag.length
+      if (count >= 3) break
+    }
+    if (count > 1) hitCount += Math.min(count - 1, 2)
+  }
+  if (hitCount > 0) return 2 - Math.min(hitCount, 3) * 0.1
+  return 3
 }
 
 // 生成"角色设定 + 初始存档"（开始冒险）
@@ -287,12 +326,41 @@ ${constraint}`
 // 生成"行动"（冒险主循环）
 // 仅包含每次变化的内容：世界书注入、上一轮剧情、当前存档、玩家行动
 // 稳定内容（世界设定、面板字段、输出格式、存档结构、背包规则）已移至 system prompt
+// 递归移除空值（空数组/空字符串/空对象/undefined），用于生成紧凑 JSON 以压缩上下文体积
+function compactJson(v: unknown): unknown {
+  if (Array.isArray(v)) {
+    const arr = v.map(compactJson)
+    return arr.filter(
+      (x) => x !== undefined && !(typeof x === 'string' && x === '') &&
+        !(Array.isArray(x) && x.length === 0) &&
+        !(x !== null && typeof x === 'object' && !Array.isArray(x) && Object.keys(x as object).length === 0),
+    )
+  }
+  if (v !== null && typeof v === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      const c = compactJson(val)
+      if (c === undefined) continue
+      if (typeof c === 'string' && c === '') continue
+      if (Array.isArray(c) && c.length === 0) continue
+      if (c !== null && typeof c === 'object' && !Array.isArray(c) && Object.keys(c as object).length === 0) continue
+      out[k] = c
+    }
+    return out
+  }
+  return v
+}
+
+function stringifyCompact(v: unknown): string {
+  return JSON.stringify(compactJson(v))
+}
+
 export function buildActionPrompt(
   world: World,
   currentSave: SaveData,
   userInput: string,
-
   lastNarration?: string,
+  fastForward?: boolean,
 ): string {
   const lastPart = lastNarration ? `【上一轮剧情供衔接参考】\n${lastNarration}\n\n` : ''
   const context = [
@@ -310,16 +378,25 @@ export function buildActionPrompt(
     context,
     world.sceneField ? String(currentSave.panel[world.sceneField] ?? '') : undefined,
   )
+  const fastPart = fastForward
+    ? `
+
+【快速推进叙事（已开启，优先级高，务必执行）】
+- 玩家选择快速推进模式：省略与环境营造、路人寒暄、旅途跋涉、重复场景相关的无关细节。
+- 直接推进主线关键节点、重大转折与影响剧情走向的事件；节奏紧凑，避免拖沓。
+- 每轮仍须完整更新存档与世界书（save / loreUpdates 不可省略），但 narration 聚焦主线进展。
+- 若当轮确实没有值得推进的主线内容，可用两三句话带过过程，把重点留给下轮更重要的节点。`
+    : ''
   return `${lorePart}
 
 ${lastPart}【当前存档（已是最新状态，须据此推进剧情并在行动后更新）】
-${JSON.stringify(currentSave, null, 2)}
+${stringifyCompact(currentSave)}
 
 # 角色开场判定
 若当前存档表明角色尚未正式开场（characterProfile 极简或标注待补充、name/race 等关键字段为空或默认值、overview.impression 显示待补充等），本轮「玩家行动」应理解为「对角色设定的补充」而非正式行动：据此完善 characterProfile 与面板字段，然后生成正式的开场叙事并拉开序幕；若信息仍不足，继续友善追问需要补充的内容，不强行开始剧情。
 
 【玩家行动】
-${userInput}`
+${userInput}${fastPart}`
 }
 
 // 系统消息（行动场景用到）
@@ -339,4 +416,116 @@ export function buildActionSystemPrompt(
     s += `\n\n【世界设定】\n${world.worldSetting}\n\n【角色面板字段】\n${panelSchemaToText(world.panelSchema)}`
   }
   return s
+}
+// ===== 输出截断后的自动降级重试 Prompt =====
+// 统一组装"世界书注入 + 上一轮剧情 + 当前存档 + 玩家行动"片段，供恢复请求复用
+function buildActionRecoveryBase(
+  world: World,
+  currentSave: SaveData,
+  userInput: string,
+  lastNarration: string | undefined,
+  includeSave: boolean,
+): string {
+  const context = [
+    userInput,
+    lastNarration ?? '',
+    ...Object.values(currentSave.panel).map((v) => String(v)),
+    currentSave.characterProfile,
+    currentSave.overview.impression,
+    currentSave.overview.ongoing,
+    ...currentSave.map.map((m) => `${m.name} ${m.description}`),
+    ...currentSave.characters.map((c) => c.name),
+  ].join(' ')
+  const lorePart = buildLoreInjection(
+    world,
+    context,
+    world.sceneField ? String(currentSave.panel[world.sceneField] ?? '') : undefined,
+  )
+  const lastPart = lastNarration ? `【上一轮剧情供衔接参考】\n${lastNarration}\n\n` : ''
+  const savePart = includeSave
+    ? `${lastPart}【当前存档（须据此推进剧情并更新）】\n${stringifyCompact(currentSave)}\n\n`
+    : lastPart
+  return `${lorePart}\n\n${savePart}【玩家行动】\n${userInput}`
+}
+
+// JSON 语法硬性要求（截断恢复专用，简短版）
+const RECOVERY_JSON_RULE = `JSON 语法硬性要求（违反任一条都会解析失败）：
+- 键名与字符串值一律用英文双引号；字符串内换行写成 \\n，英文双引号写成 \\"。
+- 不要单引号、中文引号、注释（//、/* */）、尾逗号。
+- 不要截断 JSON：宁可把 narration 写短，也必须保证 JSON 完整闭合，只输出一个 JSON 对象且不加任何其他文字。`
+
+// diff 模式：让 AI 输出"存档修改指令"而非完整存档，本地应用，最大限度减小输出体积
+export function buildActionRecoveryDiffPrompt(
+  world: World,
+  currentSave: SaveData,
+  userInput: string,
+  lastNarration: string | undefined,
+  fastForward: boolean | undefined,
+): string {
+  const fastPart = fastForward
+    ? `\n- 快速推进叙事已开启：省略环境与寒暄细节，直接推进主线关键节点。`
+    : ''
+  return `上一次生成本轮行动的输出因过长被截断。现在用更精简的方式重新生成本轮结果，输出且只输出一个 JSON 对象：
+
+{
+  "narration": "本轮剧情推进的叙事（控制在 100-220 字以内，精简但完整）",
+  "options": ["参考选项1", "参考选项2", "参考选项3"],
+  "patchSave": { ...见下方 patchSave 格式说明，只列变化，不输出完整存档... },
+  "loreUpdates": [ { "title": "条目标题", "tags": ["标签"], "content": "正文", "required": false } ]
+}
+
+patchSave 格式说明（关键：这是修改指令，不是完整存档！）：
+- panel：只列出值发生变化的面板键，如 { "hp": 75, "mood": "紧张" }；未列出的键保持原样。
+- characterProfile / worldTime / overview（impression、ongoing、recentEvents、latestProgress）：需要整体替换时才提供，只替换列出的字段；无变化省略。
+- 数组字段 inventory.equipment / inventory.items / map / characters：无变化时整体省略；有增删或状态变化时必须提供完整新数组（AI 无法表达"仅删第几个"，所以数组必须整体给出）。
+- hidden：用 { "add": { "键": "值" }, "remove": ["键"] } 表达增量修改；无变化省略。
+
+${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true)}
+
+${RECOVERY_JSON_RULE}${fastPart}`
+}
+
+// split 模式第 1 次：只生成叙事与选项
+export function buildActionRecoverySplitNarrationPrompt(
+  world: World,
+  currentSave: SaveData,
+  userInput: string,
+  lastNarration: string | undefined,
+  fastForward: boolean | undefined,
+): string {
+  const fastPart = fastForward
+    ? `\n- 快速推进叙事已开启：省略环境与寒暄细节，直接推进主线关键节点。`
+    : ''
+  return `上一轮输出因过长被截断，本轮拆成两次独立生成。这是第 1 次，你只输出一个 JSON 对象：
+{
+  "narration": "本轮剧情推进的叙事（控制在 100-220 字以内，精简但完整）",
+  "options": ["参考选项1", "参考选项2", "参考选项3"]
+}
+不要输出 save、patchSave 或 loreUpdates 字段。
+
+${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true)}
+
+${RECOVERY_JSON_RULE}${fastPart}`
+}
+
+// split 模式第 2 次：基于第 1 次生成的叙事，只输出完整存档与世界书更新
+export function buildActionRecoverySplitSavePrompt(
+  world: World,
+  currentSave: SaveData,
+  narrationText: string,
+  userInput: string,
+): string {
+  return `上一轮输出因过长被截断，本轮拆成两次独立生成。第 1 次已生成叙事，这是第 2 次，你只输出一个 JSON 对象：
+{
+  "save": { ...完整更新后的存档，结构必须严格符合标准的"存档结构"，一个字段都不能少... },
+  "loreUpdates": [ { "title": "条目标题", "tags": ["标签"], "content": "正文", "required": false } ]
+}
+不要输出 narration 或 options 字段。save 必须是完整存档（不是 patch）。
+
+【本轮实际发生的剧情（第 1 次生成结果，据此更新存档）】
+${narrationText}
+
+${buildActionRecoveryBase(world, currentSave, userInput, narrationText, true)}
+
+${RECOVERY_JSON_RULE}`
 }

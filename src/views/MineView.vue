@@ -67,6 +67,10 @@ function toggleDevMode() {
   settings.setDevMode(devMode.value)
 }
 
+function setTruncateStrategy(mode: 'diff' | 'split') {
+  settings.setTruncateStrategy(mode)
+}
+
 onMounted(async () => {
   if (!settings.loaded) {
     await settings.load()
@@ -299,6 +303,29 @@ async function doClearLog() {
         <span>开发者模式报错：显示完整错误信息（含技术详情），便于排查问题</span>
       </label>
 
+      <div class="truncate-group">
+        <p class="truncate-label">AI 输出过长被截断时</p>
+        <label class="radio-row">
+          <input
+            type="radio"
+            value="diff"
+            :checked="settings.truncateStrategy === 'diff'"
+            @change="setTruncateStrategy('diff')"
+          />
+          <span>精简修改指令（推荐）：让 AI 只输出存档变化，本地自动应用</span>
+        </label>
+        <label class="radio-row">
+          <input
+            type="radio"
+            value="split"
+            :checked="settings.truncateStrategy === 'split'"
+            @change="setTruncateStrategy('split')"
+          />
+          <span>拆分输出：分两次请求分别生成剧情与存档</span>
+        </label>
+        <p class="truncate-hint">仅在输出被截断时自动触发重试；正常情况下仍为完整输出，保证记忆连续</p>
+      </div>
+
       <div class="log-row">
         <button class="log-btn" :disabled="logBusy" @click="downloadLog">
           {{ logBusy ? '导出中…' : '导出运行日志' }}
@@ -440,6 +467,41 @@ async function doClearLog() {
   width: 16px;
   height: 16px;
   cursor: pointer;
+}
+.truncate-group {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+.truncate-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.radio-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1.5;
+  margin-top: 6px;
+}
+.radio-row input {
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  cursor: pointer;
+  flex: none;
+}
+.truncate-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 8px;
+  opacity: 0.85;
 }
 .log-row {
   display: flex;

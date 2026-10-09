@@ -18,6 +18,10 @@ const input = computed({
 })
 const enhanceSummarize = ref(true) // 总结优化已有设定
 const enhanceExpand = ref(true) // 补充更多合理设定
+const fastEnabled = ref(settings.fastForward) // 快速推进叙事
+function onFastChange() {
+  void settings.setFastForward(fastEnabled.value)
+}
 
 const worldName = computed(() => worldStore.currentWorld?.name ?? '未选择世界')
 const currentPage = computed(() => adventure.currentPage)
@@ -239,6 +243,10 @@ async function rollback() {
       </div>
 
       <div v-if="isLatest" class="controls">
+        <label class="fast-row">
+          <input type="checkbox" v-model="fastEnabled" @change="onFastChange" />
+          <span>快速推进叙事（跳过细节，直推主线）</span>
+        </label>
         <button
           v-for="(o, i) in currentPage?.options ?? []"
           :key="i"
@@ -279,6 +287,7 @@ async function rollback() {
         <span>正在生成…</span>
         <span v-if="loadingSeconds >= 1" class="loading-elapsed">已等待 {{ loadingSeconds }} 秒</span>
         <span v-if="isLongSetting" class="loading-hint">设定较长，首次生成可能需要更久，请耐心等待</span>
+        <span v-if="adventure.recoveryNote" class="loading-hint">{{ adventure.recoveryNote }}</span>
       </div>
     </div>
   </div>
@@ -469,6 +478,20 @@ async function rollback() {
   flex-direction: column;
   gap: 10px;
   padding-bottom: 8px;
+}
+.fast-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1.4;
+}
+.fast-row input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
 }
 .option {
   text-align: left;
