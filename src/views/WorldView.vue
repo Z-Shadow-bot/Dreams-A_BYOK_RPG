@@ -511,7 +511,7 @@ async function doImportDlc() {
                 <input v-model="entry.title" class="input lore-title" placeholder="条目标题（可选）" />
                 <label class="lore-required">
                   <input type="checkbox" v-model="entry.required" />
-                  <span>必带</span>
+                  <span>必需</span>
                 </label>
                 <label class="lore-required">
                   <input type="checkbox" v-model="entry.fixed" />

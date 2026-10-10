@@ -148,7 +148,7 @@ ${userInput}
 
 请完成三件事：
 1. 提炼精简的「核心设定」（worldSetting）：包含世界观铁律、不可违背的规则、全局框架与叙事基调。控制在 1500~3000 字以内，去除冗余细节，只保留每轮必须牢记的硬约束与骨架。${enhanceText}
-2. 把完整、详细的设定拆分到一个一个「世界书条目」（lorebook）中：每个条目聚焦一个主题（某地点、组织、人物、物品、规则、种族、地域等），用 tags 标注其适用的场景与主题（如"山脉""都城""鹰族""禁咒"），并将 2~5 条最重要的全局规则标注 required:true（每轮必带，注意控制数量避免上下文过长）。详细内容必须完整保留在条目中，条目数量不限，总量可以很大。
+2. 把完整、详细的设定拆分到一个一个「世界书条目」（lorebook）中：每个条目聚焦一个主题（某地点、组织、人物、物品、规则、种族、地域等），用 tags 标注其适用的场景与主题（如"山脉""都城""鹰族""禁咒"），并将 2~5 条最重要的全局规则标注 required:true（每轮必需，注意控制数量避免上下文过长）。详细内容必须完整保留在条目中，条目数量不限，总量可以很大。
    - 不会随剧情改变的底层设定（如世界物理法则、魔法体系根本规则、地理常识）应标注 fixed:true，防止后续剧情推进时被误改。
    - 当某条目在剧情中被引用时，若需要另一条目作为补充上下文（如"鹰族"条目需要"天空之城"条目），请在 links 中填入关联条目的标题（字符串数组），系统会在注入本条目时一并注入关联条目（仅展开一层）。
 3. 为这个世界设计「角色面板字段」清单（panelSchema）：冒险中需要持续追踪的角色状态（位置、时间、HP、状态、技能等），每字段给出英文 key、中文含义、类型（text/number）和可选单位。
@@ -187,7 +187,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
     const tags = Array.isArray(e.tags) ? e.tags.filter((t) => typeof t === 'string' && t.trim()) : []
     let rank: number
     if (e.required) {
-      rank = 0 // 必带
+      rank = 0 // 必需
     } else if (scene) {
       const exact = tags.some((t) => t.trim() === scene)
       let broad = false
@@ -212,7 +212,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
   let used = 0
   const picked: LoreEntry[] = []
   const pickedIds = new Set<string>()
-  // 必带条目必须全部带入，不受预算限制
+  // 必需条目必须全部带入，不受预算限制
   const requiredEntries = scored.filter((s) => s.e.required)
   for (const s of requiredEntries) {
     picked.push(s.e)
@@ -255,7 +255,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
     const head = e.title && e.title.trim() ? `【${e.title.trim()}】` : ''
     const tags = Array.isArray(e.tags) && e.tags.length ? `（标签：${e.tags.join('、')}）` : ''
     const flags: string[] = []
-    if (e.required) flags.push('必带')
+    if (e.required) flags.push('必需')
     if (e.fixed) flags.push('固定')
     if (e.hidden) flags.push('隐藏·彩蛋')
     const flagStr = flags.length ? `（${flags.join('；')}）` : ''

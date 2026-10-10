@@ -261,7 +261,7 @@ const loreOverview = computed(() => {
             <div v-for="entry in loreOverview" :key="entry.id" class="lore-overview-row">
               <div class="lore-overview-head">
                 <span class="lore-overview-title">{{ entry.title }}</span>
-                <span v-if="entry.required" class="lore-flag">必带</span>
+                <span v-if="entry.required" class="lore-flag">必需</span>
                 <span v-if="entry.fixed" class="lore-flag fixed">固定</span>
               </div>
               <div class="lore-overview-tags">

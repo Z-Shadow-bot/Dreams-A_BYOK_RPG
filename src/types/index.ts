@@ -60,7 +60,7 @@ export interface LoreEntry {
   title?: string // 条目标题，便于检索定位
   tags: string[] // 标签（场景/地点/人物/主题等），用于按需命中
   content: string // 条目正文（详细设定）
-  required?: boolean // 必带：每轮必带（AI 创建时标注，通常 2-5 条）
+  required?: boolean // 必需：每轮必需（AI 创建时标注，通常 2-5 条）
   fixed?: boolean // 固定：AI 不得通过 loreUpdates 修改此条目（用于不会改变的底层设定）
   links?: string[] // 关联条目标题列表：当本条目被注入时，这些标题对应的条目也会一并注入（仅展开一层）
   hidden?: boolean // 隐藏条目（彩蛋NPC等，状态页世界书概览不显示；角色出场后通过 loreUpdates 移除此标记）
