@@ -61,7 +61,7 @@ export function buildOutputFormat(narrationMin: number, narrationMax: number): s
   "narration": "场景描写+玩家行动结果+世界反应（${narrationMin}-${narrationMax}字，第二人称'你'）",
   "options": ["参考选项1", "参考选项2", "参考选项3"],
   "save": { ...下面"存档结构"定义的完整存档对象... },
-  "loreUpdates": [ { "title": "条目标题", "tags": ["标签","标签"], "content": "条目正文", "required": false } ]
+  "loreUpdates": [ { "title": "条目标题", "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] } ]
 }
 
 JSON 语法硬性要求（违反任一条都会导致解析失败）：
@@ -148,13 +148,15 @@ ${userInput}
 
 请完成三件事：
 1. 提炼精简的「核心设定」（worldSetting）：包含世界观铁律、不可违背的规则、全局框架与叙事基调。控制在 1500~3000 字以内，去除冗余细节，只保留每轮必须牢记的硬约束与骨架。${enhanceText}
-2. 把完整、详细的设定拆分到一个一个「世界书条目」（lorebook）中：每个条目聚焦一个主题（某地点、组织、人物、物品、规则、种族、地域等），用 tags 标注其适用的场景与主题（如"山脉""都城""鹰族""禁咒"），并将 2~5 条最重要的全局铁律标注 required:true（每轮必带）。详细内容必须完整保留在条目中，条目数量不限，总量可以很大。
+2. 把完整、详细的设定拆分到一个一个「世界书条目」（lorebook）中：每个条目聚焦一个主题（某地点、组织、人物、物品、规则、种族、地域等），用 tags 标注其适用的场景与主题（如"山脉""都城""鹰族""禁咒"），并将 2~5 条最重要的全局规则标注 required:true（每轮必带，注意控制数量避免上下文过长）。详细内容必须完整保留在条目中，条目数量不限，总量可以很大。
+   - 不会随剧情改变的底层设定（如世界物理法则、魔法体系根本规则、地理常识）应标注 fixed:true，防止后续剧情推进时被误改。
+   - 当某条目在剧情中被引用时，若需要另一条目作为补充上下文（如"鹰族"条目需要"天空之城"条目），请在 links 中填入关联条目的标题（字符串数组），系统会在注入本条目时一并注入关联条目（仅展开一层）。
 3. 为这个世界设计「角色面板字段」清单（panelSchema）：冒险中需要持续追踪的角色状态（位置、时间、HP、状态、技能等），每字段给出英文 key、中文含义、类型（text/number）和可选单位。
 
 请只输出一个 JSON 对象，结构如下，不得输出 JSON 之外的任何文字：
 {
   "worldSetting": "精简的核心设定文本",
-  "lorebook": [ { "title": "条目标题", "tags": ["标签","标签"], "content": "详细设定正文", "required": true } ],
+  "lorebook": [ { "title": "条目标题", "tags": ["标签","标签"], "content": "详细设定正文", "required": true, "fixed": false, "links": ["关联条目标题"] } ],
   "panelSchema": [ { "key": "英文键名", "label": "中文含义", "type": "text或number", "unit": "可选单位或省略" } ]
 }`
 }
@@ -185,7 +187,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
     const tags = Array.isArray(e.tags) ? e.tags.filter((t) => typeof t === 'string' && t.trim()) : []
     let rank: number
     if (e.required) {
-      rank = 0 // 铁律必带
+      rank = 0 // 必带
     } else if (scene) {
       const exact = tags.some((t) => t.trim() === scene)
       let broad = false
@@ -209,27 +211,55 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
   scored.sort((a, b) => a.rank - b.rank)
   let used = 0
   const picked: LoreEntry[] = []
-  // 铁律条目必须全部带入，不受预算限制
+  const pickedIds = new Set<string>()
+  // 必带条目必须全部带入，不受预算限制
   const requiredEntries = scored.filter((s) => s.e.required)
   for (const s of requiredEntries) {
     picked.push(s.e)
+    pickedIds.add(s.e.id)
     used += s.e.content.length
   }
   // 其余条目按相关度填充剩余预算
   for (const s of scored) {
     if (s.e.required) continue
+    if (pickedIds.has(s.e.id)) continue
     const size = s.e.content.length
     if (used + size > LORE_BUDGET) continue
     picked.push(s.e)
+    pickedIds.add(s.e.id)
     used += size
+  }
+  // 关联条目展开（仅一层）：对已选中的条目，按 links（标题）找到对应条目并注入，受预算限制
+  const byTitle = new Map<string, LoreEntry>()
+  for (const e of entries) {
+    const t = (e.title ?? '').trim()
+    if (t) byTitle.set(t, e)
+  }
+  const linkBudget = Math.min(2000, LORE_BUDGET) // 关联条目额外预算上限
+  let linkUsed = 0
+  const basePicked = [...picked]
+  for (const p of basePicked) {
+    const links = Array.isArray(p.links) ? p.links : []
+    for (const linkTitle of links) {
+      const target = byTitle.get(linkTitle.trim())
+      if (!target || pickedIds.has(target.id)) continue
+      const size = target.content.length
+      if (linkUsed + size > linkBudget) continue
+      picked.push(target)
+      pickedIds.add(target.id)
+      linkUsed += size
+    }
   }
   if (picked.length === 0) return ''
   const lines = picked.map((e) => {
     const head = e.title && e.title.trim() ? `【${e.title.trim()}】` : ''
     const tags = Array.isArray(e.tags) && e.tags.length ? `（标签：${e.tags.join('、')}）` : ''
-    const flag = e.required ? '（铁律）' : ''
-    const hiddenFlag = e.hidden ? '（隐藏·彩蛋）' : ''
-    return `- ${head}${flag}${hiddenFlag}${tags}\n  ${e.content.trim()}`
+    const flags: string[] = []
+    if (e.required) flags.push('必带')
+    if (e.fixed) flags.push('固定')
+    if (e.hidden) flags.push('隐藏·彩蛋')
+    const flagStr = flags.length ? `（${flags.join('；')}）` : ''
+    return `- ${head}${flagStr}${tags}\n  ${e.content.trim()}`
   })
   return `
 
@@ -245,6 +275,7 @@ ${lines.join('\n')}
 - 若剧情中出现了值得长期记录的新概念、新地点、新人物或新事物（世界书尚未记载、且对后续剧情有持续影响），请通过输出格式中的 loreUpdates 字段返回新增或更新条目（保留必要的 title/tags/content/required），同时确保存档 map/characters 等相应字段同步出现该内容；不要记录琐碎、一次性或不重要的细节。
 - 当玩家时隔较久重返旧地点或重遇旧人物时，应先根据已流逝的时间（参考存档 worldTime 与剧情上下文）对该世界书条目做合理演化——地点可能兴衰变化、人物可能因独立日程而离开或改变，不会停在原地等待——再据此读取与呈现；演化结果同时通过 loreUpdates 更新到世界书，并同步到存档 map/characters。
 - 标注"隐藏·彩蛋"的条目是尚未出场的彩蛋角色/设定：不要主动让该角色出场，只在剧情自然发展遇到合理条件时（如旅途偶遇、城镇擦肩、任务交集）才让她出场；出场后通过 loreUpdates 更新该条目并移除 hidden 标记（在返回的条目中设 hidden 为 false 或省略），此后按普通世界书条目处理。
+- 标注"固定"的条目是不可更改的底层设定：不得通过 loreUpdates 修改或删除固定条目的 title/tags/content/fixed/links，可以在该条目描述的框架内展开剧情。
 - loreUpdates 仅在确实有更新时返回，否则返回空数组 []。`
 }
 
@@ -477,7 +508,7 @@ export function buildActionRecoveryDiffPrompt(
   "narration": "本轮剧情推进的叙事（控制在 100-220 字以内，精简但完整）",
   "options": ["参考选项1", "参考选项2", "参考选项3"],
   "patchSave": { ...见下方 patchSave 格式说明，只列变化，不输出完整存档... },
-  "loreUpdates": [ { "title": "条目标题", "tags": ["标签"], "content": "正文", "required": false } ]
+  "loreUpdates": [ { "title": "条目标题", "tags": ["标签"], "content": "正文", "required": false, "fixed": false, "links": ["关联条目标题"] } ]
 }
 
 patchSave 格式说明（关键：这是修改指令，不是完整存档！）：
@@ -524,7 +555,7 @@ export function buildActionRecoverySplitSavePrompt(
   return `上一轮输出因过长被截断，本轮拆成两次独立生成。第 1 次已生成叙事，这是第 2 次，你只输出一个 JSON 对象：
 {
   "save": { ...完整更新后的存档，结构必须严格符合标准的"存档结构"，一个字段都不能少... },
-  "loreUpdates": [ { "title": "条目标题", "tags": ["标签"], "content": "正文", "required": false } ]
+  "loreUpdates": [ { "title": "条目标题", "tags": ["标签"], "content": "正文", "required": false, "fixed": false, "links": ["关联条目标题"] } ]
 }
 不要输出 narration 或 options 字段。save 必须是完整存档（不是 patch）。
 

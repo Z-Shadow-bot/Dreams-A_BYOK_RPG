@@ -120,25 +120,17 @@ async function toggleDetailedBag(e: Event) {
   await settings.setDetailedBag(checked)
 }
 
-// 世界书概览：条目 + 与当前存档的一致性提示
+// 世界书概览
 const loreOverview = computed(() => {
   const world = worldStore.currentWorld
   if (!world?.lorebook?.length) return []
-  const saveNames = new Set<string>()
-  if (save.value) {
-    for (const m of save.value.map) saveNames.add(m.name)
-    for (const c of save.value.characters) saveNames.add(c.name)
-  }
   return world.lorebook.filter((e) => !e.hidden).map((e) => {
-    const matched = (e.tags ?? []).some((t) =>
-      [...saveNames].some((n) => n.includes(t) || t.includes(n)),
-    )
     return {
       id: e.id,
       title: e.title ?? '（无标题）',
       tags: e.tags ?? [],
       required: !!e.required,
-      matched,
+      fixed: !!e.fixed,
       preview: e.content.slice(0, 80) + (e.content.length > 80 ? '…' : ''),
     }
   })
@@ -269,11 +261,8 @@ const loreOverview = computed(() => {
             <div v-for="entry in loreOverview" :key="entry.id" class="lore-overview-row">
               <div class="lore-overview-head">
                 <span class="lore-overview-title">{{ entry.title }}</span>
-                <span v-if="entry.required" class="lore-flag">铁律</span>
-                <span
-                  class="lore-match"
-                  :class="{ matched: entry.matched, orphan: !entry.matched }"
-                >{{ entry.matched ? '已对应' : '暂未对应' }}</span>
+                <span v-if="entry.required" class="lore-flag">必带</span>
+                <span v-if="entry.fixed" class="lore-flag fixed">固定</span>
               </div>
               <div class="lore-overview-tags">
                 <span v-for="t in entry.tags" :key="t" class="lore-tag">{{ t }}</span>
@@ -489,15 +478,9 @@ const loreOverview = computed(() => {
   border-radius: 4px;
   padding: 1px 5px;
 }
-.lore-match {
-  font-size: 11px;
-  margin-left: auto;
-}
-.lore-match.matched {
-  color: var(--active);
-}
-.lore-match.orphan {
-  color: var(--muted);
+.lore-flag.fixed {
+  color: #fff;
+  background: var(--active);
 }
 .lore-overview-tags {
   display: flex;

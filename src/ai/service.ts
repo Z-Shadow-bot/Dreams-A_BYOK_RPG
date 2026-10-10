@@ -138,6 +138,8 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
     tags,
     content,
     required: !!e.required,
+    fixed: e.fixed === true ? true : undefined,
+    links: asStringArray(e.links).map((t) => t.trim()).filter((t) => !!t),
     hidden: e.hidden === true ? true : undefined,
   }
 }

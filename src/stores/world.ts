@@ -15,7 +15,7 @@ export function normalizeImportedLorebook(raw: unknown[]): LoreEntry[] {
       ? e.tags.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t)
       : []
     const title = typeof e.title === 'string' && e.title.trim() ? e.title.trim() : undefined
-    result.push({ id: createId(), title, tags, content, required: !!e.required, hidden: e.hidden === true ? true : undefined })
+    result.push({ id: createId(), title, tags, content, required: !!e.required, fixed: e.fixed === true ? true : undefined, links: Array.isArray(e.links) ? e.links.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t) : undefined, hidden: e.hidden === true ? true : undefined })
   }
   return result
 }

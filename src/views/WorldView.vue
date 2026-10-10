@@ -38,6 +38,8 @@ interface LoreEditRow {
   tagsText: string
   content: string
   required: boolean
+  fixed?: boolean
+  linksText: string
   hidden?: boolean
 }
 const editLorebook = ref<LoreEditRow[]>([])
@@ -168,6 +170,8 @@ function openEdit(w: World) {
     tagsText: (e.tags ?? []).join(', '),
     content: e.content ?? '',
     required: !!e.required,
+    fixed: !!e.fixed,
+    linksText: (e.links ?? []).join(', '),
     hidden: e.hidden,
   }))
   editLoreFilter.value = ''
@@ -186,7 +190,7 @@ function removeField(i: number) {
 }
 
 function addLoreEntry() {
-  editLorebook.value.push({ id: createId(), title: '', tagsText: '', content: '', required: false })
+  editLorebook.value.push({ id: createId(), title: '', tagsText: '', content: '', required: false, linksText: '' })
 }
 
 function removeLoreEntry(id: string) {
@@ -237,12 +241,18 @@ async function saveEdit() {
       .split(/[,，]/)
       .map((t) => t.trim())
       .filter((t) => !!t)
+    const links = r.linksText
+      .split(/[,，]/)
+      .map((t) => t.trim())
+      .filter((t) => !!t)
     lorebook.push({
       id: r.id,
       title: r.title.trim() || undefined,
       tags,
       content,
       required: r.required,
+      fixed: r.fixed === true ? true : undefined,
+      links: links.length > 0 ? links : undefined,
       hidden: r.hidden === true ? true : undefined,
     })
   }
@@ -503,9 +513,14 @@ async function doImportDlc() {
                   <input type="checkbox" v-model="entry.required" />
                   <span>必带</span>
                 </label>
+                <label class="lore-required">
+                  <input type="checkbox" v-model="entry.fixed" />
+                  <span>固定</span>
+                </label>
                 <button class="schema-del" @click="removeLoreEntry(entry.id)">✕</button>
               </div>
               <input v-model="entry.tagsText" class="input lore-tags" placeholder="标签（逗号分隔，如：山脉, 鹰族, 边境）" />
+              <input v-model="entry.linksText" class="input lore-tags" placeholder="关联条目（逗号分隔的条目标题，注入时一并带入）" />
               <textarea v-model="entry.content" class="textarea" rows="4" placeholder="条目详细设定内容" />
             </div>
             <p v-if="filteredLorebook.length === 0" class="muted-text">

@@ -61,7 +61,14 @@ function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreE
     const title = (u.title ?? '').trim()
     const idx = title ? book.findIndex((b) => (b.title ?? '').trim() === title) : -1
     if (idx >= 0) {
-      book[idx] = { ...book[idx], title: u.title, tags: u.tags, content: u.content, required: u.required, hidden: u.hidden }
+      // 固定条目：AI 不得修改内容/tags/title/fixed/links，仅允许移除 hidden（彩蛋出场）
+      if (book[idx].fixed) {
+        if (u.hidden === false || u.hidden === undefined) {
+          book[idx] = { ...book[idx], hidden: undefined }
+        }
+        continue
+      }
+      book[idx] = { ...book[idx], title: u.title, tags: u.tags, content: u.content, required: u.required, fixed: u.fixed, links: u.links, hidden: u.hidden }
     } else {
       book.push({ ...u })
     }
