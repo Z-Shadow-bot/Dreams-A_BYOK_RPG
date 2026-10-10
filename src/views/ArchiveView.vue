@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useAdventureStore } from '@/stores/adventure'
 import { useWorldStore } from '@/stores/world'
-import { downloadJSON, pickJSONFile, safeFilename, timestamp } from '@/utils/file'
+import { downloadJSON, downloadText, pickJSONFile, safeFilename, timestamp } from '@/utils/file'
 import type { SavePoint } from '@/types'
 
 const adventure = useAdventureStore()
@@ -16,6 +16,17 @@ const exporting = ref(false)
 const importing = ref(false)
 const saving = ref(false)
 const opError = ref('')
+const novelExporting = ref(false)
+const novelFrom = ref(1)
+const novelTo = ref(1)
+const novelFromEdited = ref(false)
+const novelToEdited = ref(false)
+
+watch(() => adventure.currentIndex, (idx) => {
+  const current = idx >= 0 ? idx + 1 : 1
+  if (!novelFromEdited.value) novelFrom.value = 1
+  if (!novelToEdited.value) novelTo.value = current
+})
 
 async function save() {
   if (saving.value) return
@@ -103,6 +114,44 @@ async function importAdventureFile() {
 function formatTime(t: number): string {
   return new Date(t).toLocaleString('zh-CN', { hour12: false })
 }
+
+async function exportNovel() {
+  importError.value = ''
+  opError.value = ''
+  if (adventure.pages.length === 0) {
+    opError.value = '当前没有可导出的故事内容'
+    return
+  }
+  const from = Math.round(novelFrom.value)
+  const to = Math.round(novelTo.value)
+  const total = adventure.pages.length
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    opError.value = '页码范围无效'
+    return
+  }
+  const first = Math.max(1, Math.min(from, total))
+  const last = Math.max(first, Math.min(to, total))
+  const worldName = worldStore.currentWorld?.name ?? '冒险记录'
+  const lines: string[] = [`${worldName}`, `（节选自冒险记录 · 第 ${first}-${last} 页）`, '']
+  for (let i = first - 1; i <= last - 1; i++) {
+    const p = adventure.pages[i]
+    if (!p) continue
+    lines.push(`【第 ${i + 1} 页】`)
+    if (p.playerInput && p.playerInput.trim()) {
+      lines.push(`》${p.playerInput.trim()}`)
+    }
+    lines.push(p.narration.trim(), '')
+  }
+  lines.push(`—— 完 · 共 ${last - first + 1} 页 ——`)
+  novelExporting.value = true
+  try {
+    await downloadText(`${safeFilename(worldName)}_小说_${timestamp()}.txt`, lines.join('\n'))
+  } catch (e) {
+    opError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    novelExporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -139,6 +188,29 @@ function formatTime(t: number): string {
       <button class="io-btn import" :disabled="importing" @click="importAdventureFile">
         {{ importing ? '导入中…' : '导入冒险' }}
       </button>
+    </div>
+
+    <div v-if="adventure.hasAdventure" class="novel-bar">
+      <button class="io-btn novel" :disabled="novelExporting" @click="exportNovel">
+        {{ novelExporting ? '导出中…' : '导出为小说' }}
+      </button>
+      <input
+        v-model.number="novelFrom"
+        type="number"
+        min="1"
+        :max="adventure.pages.length"
+        class="page-input"
+        @input="novelFromEdited = true"
+      />
+      <span class="range-sep">~</span>
+      <input
+        v-model.number="novelTo"
+        type="number"
+        min="1"
+        :max="adventure.pages.length"
+        class="page-input"
+        @input="novelToEdited = true"
+      />
     </div>
 
     <p v-if="importError" class="restart-error">⚠ {{ importError }}</p>
@@ -287,5 +359,27 @@ function formatTime(t: number): string {
 }
 .io-btn:disabled {
   opacity: 0.5;
+}
+.novel-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+.io-btn.novel {
+  padding: 10px 14px;
+  font-size: 14px;
+}
+.page-input {
+  width: 64px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 8px;
+  text-align: center;
+  color: var(--text);
+}
+.range-sep {
+  color: var(--muted);
 }
 </style>

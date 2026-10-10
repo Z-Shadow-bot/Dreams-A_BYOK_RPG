@@ -45,6 +45,33 @@ export async function downloadJSON(filename: string, data: unknown): Promise<voi
   }
 }
 
+export async function downloadText(filename: string, content: string): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    const result = await Filesystem.writeFile({
+      path: `exports/${filename}`,
+      data: content,
+      directory: Directory.Cache,
+      recursive: true,
+      encoding: Encoding.UTF8,
+    })
+    await Share.share({
+      title: filename,
+      files: [result.uri],
+      dialogTitle: '导出文件',
+    })
+  } else {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+}
+
 export function pickJSONFile(): Promise<string> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input')
