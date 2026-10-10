@@ -91,7 +91,8 @@ export const SAVE_SCHEMA_DESC = `# 存档结构（save 字段的严格定义）
   },
   "map": [ { "name": "地点名", "description": "简要情况", "people": ["位于此地的人物"], "visited": true } ],
   "characters": [ { "name": "角色名", "introduction": "简要介绍", "attitude": "当前态度" } ],
-  "characterProfile": "玩家所扮演角色的背景设定（随经历持续更新）",
+  "characterProfile": "玩家所扮演角色的背景人设（出身、性格、外貌、信念等相对稳定的设定；除非剧情重大转折，否则保持不变）",
+  "experience": "玩家角色的经历概述（冒险开始至今经历的重要事件概括，随剧情持续更新；与人设分开记录）",
   "overview": {
     "impression": "角色的主观认知/当前处境，符合角色认知水平，禁止上帝视角，例如'陌生的城市，处处透着危险'",
     "ongoing": "当前进行中的事项",
@@ -105,6 +106,7 @@ export const SAVE_SCHEMA_DESC = `# 存档结构（save 字段的严格定义）
 关键规则：
 - panel 的键名必须与"角色面板字段"清单中的英文 key 完全一致，不得用中文标签替代，不得增删键。
 - inventory.equipment（装备）与 inventory.items（普通物品）必须分开放置，不得混在一起。
+- characterProfile 与 experience 必须分开维护：characterProfile 记录稳定的人设背景，experience 记录随剧情演进的经历；两者不得互相混写、互相覆盖。更新存档时，除非剧情出现重大转折，否则 characterProfile 应保持原样，将变化写进 experience。
 - overview 四栏必须与存档其他部分保持一致，体现最新状态。
 - hidden 专用于幕后信息：不在状态栏显示，但作为后续剧情生成的参考；当玩家从角色视角可以得知该内容时，将它从 hidden 移除，改写进对应的可见字段。
 - worldTime 是全局世界时钟：每轮根据剧情推进的时间流逝更新它（包含"从开始至今的累计时间"+ 当前季节/时刻），用于保证时间线一致、判断"距上次见面/到访过了多久"；玩家行动若跨越数天数月，须相应推进 worldTime，并同步更新角色年龄（若面板含 age 字段）等随时间变化的量。
@@ -286,6 +288,7 @@ export function buildCharacterGenPrompt(
   if (opts.expand) {
     lines.push('- 请基于玩家描述补充更多合理、自洽的角色细节（如性格、习惯、动机、过往经历等），让角色更饱满立体，但不得与玩家已有描述相矛盾。')
   }
+  lines.push('- 请把玩家提供的角色描述拆成两部分写入存档：characterProfile 记录稳定的人设背景（出身、性格、外貌、信念等），experience 记录角色与此前经历相关的概述；两者分开维护，后续剧情中 experience 持续演进，characterProfile 保持稳定。')
   lines.push('- 角色面板字段可根据设定的合理暗示推测填充（如描述提及"剑客"可推测有武器、擅长战斗），但不得编造设定中未暗示的具体物品名称、人物关系等。')
   lines.push('- 初始存档其余字段（inventory、map、characters 等）只填入与角色描述/世界设定直接相符的内容，未提及的方面用中性默认值补充（如空背包、起始位置）。')
   lines.push('- 生成开场叙事（第一幕场景）+ 2-3 个可选行动方向，并生成完整初始存档。')
@@ -312,6 +315,7 @@ ${buildOutputFormat(narrationMin, narrationMax)}
   "map": [],
   "characters": [],
   "characterProfile": "",
+  "experience": "",
   "overview": { "impression": "", "ongoing": "", "recentEvents": [], "latestProgress": "" },
   "hidden": {},
   "worldTime": "冒险开始的时刻，如'启程第1天·某季节·某时段'"
@@ -368,6 +372,7 @@ export function buildActionPrompt(
     lastNarration ?? '',
     ...Object.values(currentSave.panel).map((v) => String(v)),
     currentSave.characterProfile,
+    currentSave.experience,
     currentSave.overview.impression,
     currentSave.overview.ongoing,
     ...currentSave.map.map((m) => `${m.name} ${m.description}`),
@@ -431,6 +436,7 @@ function buildActionRecoveryBase(
     lastNarration ?? '',
     ...Object.values(currentSave.panel).map((v) => String(v)),
     currentSave.characterProfile,
+    currentSave.experience,
     currentSave.overview.impression,
     currentSave.overview.ongoing,
     ...currentSave.map.map((m) => `${m.name} ${m.description}`),
@@ -476,7 +482,7 @@ export function buildActionRecoveryDiffPrompt(
 
 patchSave 格式说明（关键：这是修改指令，不是完整存档！）：
 - panel：只列出值发生变化的面板键，如 { "hp": 75, "mood": "紧张" }；未列出的键保持原样。
-- characterProfile / worldTime / overview（impression、ongoing、recentEvents、latestProgress）：需要整体替换时才提供，只替换列出的字段；无变化省略。
+- characterProfile / experience / worldTime / overview（impression、ongoing、recentEvents、latestProgress）：需要整体替换时才提供，只替换列出的字段；无变化省略。
 - 数组字段 inventory.equipment / inventory.items / map / characters：无变化时整体省略；有增删或状态变化时必须提供完整新数组（AI 无法表达"仅删第几个"，所以数组必须整体给出）。
 - hidden：用 { "add": { "键": "值" }, "remove": ["键"] } 表达增量修改；无变化省略。
 

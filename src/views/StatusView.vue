@@ -9,7 +9,7 @@ const adventure = useAdventureStore()
 const worldStore = useWorldStore()
 const settings = useSettingsStore()
 
-const tabs = ['面板', '背包', '地图', '人物', '设定', '概述'] as const
+const tabs = ['面板', '背包', '地图', '人物', '设定', '经历', '概述'] as const
 type Tab = (typeof tabs)[number]
 const activeTab = ref<Tab>('面板')
 
@@ -21,10 +21,23 @@ const profileSaving = ref(false)
 const profileSaved = ref(false)
 let profileSavedTimer: ReturnType<typeof setTimeout> | null = null
 
+const experienceEdit = ref('')
+const experienceSaving = ref(false)
+const experienceSaved = ref(false)
+let experienceSavedTimer: ReturnType<typeof setTimeout> | null = null
+
 watch(
   () => save.value?.characterProfile,
   (v) => {
     profileEdit.value = v ?? ''
+  },
+  { immediate: true },
+)
+
+watch(
+  () => save.value?.experience,
+  (v) => {
+    experienceEdit.value = v ?? ''
   },
   { immediate: true },
 )
@@ -43,6 +56,27 @@ async function saveProfile() {
   } finally {
     profileSaving.value = false
   }
+}
+
+async function saveExperience() {
+  if (experienceSaving.value || !adventure.hasAdventure) return
+  experienceSaving.value = true
+  try {
+    await adventure.updateExperience(experienceEdit.value)
+    experienceSaved.value = true
+    if (experienceSavedTimer) clearTimeout(experienceSavedTimer)
+    experienceSavedTimer = setTimeout(() => {
+      experienceSaved.value = false
+      experienceSavedTimer = null
+    }, 2000)
+  } finally {
+    experienceSaving.value = false
+  }
+}
+
+async function toggleManualProfile(e: Event) {
+  const checked = (e.target as HTMLInputElement).checked
+  await settings.setManualProfile(checked)
 }
 
 const currentScene = computed(() => {
@@ -71,6 +105,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (profileSavedTimer) clearTimeout(profileSavedTimer)
+  if (experienceSavedTimer) clearTimeout(experienceSavedTimer)
 })
 
 
@@ -213,6 +248,18 @@ const loreOverview = computed(() => {
             rows="12"
             placeholder="角色设定…"
           />
+          <label class="detail-row">
+            <input
+              type="checkbox"
+              :checked="settings.manualProfile"
+              @change="toggleManualProfile"
+            />
+            <span>手动更新设定</span>
+          </label>
+          <p class="profile-hint">
+            开启后，AI 推进剧情时不会自动修改上方「角色设定」中的人设内容，人设完全由你手动维护，
+            避免剧情发展把角色设定改乱。仅影响人设，不影响经历、面板与状态等内容的自动更新。
+          </p>
           <button class="save-profile-btn" :disabled="profileSaving" @click="saveProfile">
             {{ profileSaved ? '已保存 ✓' : '保存设定' }}
           </button>
@@ -234,6 +281,22 @@ const loreOverview = computed(() => {
               <p class="lore-overview-preview">{{ entry.preview }}</p>
             </div>
           </section>
+        </div>
+
+        <!-- 角色经历 -->
+        <div v-else-if="activeTab === '经历'" class="prose">
+          <p class="body-text profile-tip">
+            AI 会在此记录冒险以来经历的重要事件概括，与人设分开维护。你也可以手动编辑。
+          </p>
+          <textarea
+            v-model="experienceEdit"
+            class="profile-edit"
+            rows="12"
+            placeholder="角色经历…"
+          />
+          <button class="save-profile-btn" :disabled="experienceSaving" @click="saveExperience">
+            {{ experienceSaved ? '已保存 ✓' : '保存经历' }}
+          </button>
         </div>
 
         <!-- 概述 -->
@@ -522,6 +585,19 @@ const loreOverview = computed(() => {
 }
 .save-profile-btn:disabled {
   opacity: 0.5;
+}
+.profile-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border-radius: 8px;
+}
+.profile-tip {
+  color: var(--muted);
+  font-size: 13px;
 }
 .events {
   padding-left: 20px;

@@ -332,6 +332,7 @@ export const useAdventureStore = defineStore('adventure', {
         this.currentSave = result.save
         this.currentIndex = page.index
         await this.persistState()
+        await this.autoSaveIfDue(page.index + 1)
         void useWorldStore().touch(worldId)
       } catch (e) {
         this.error = errorMessage(e, useSettingsStore().devMode)
@@ -456,6 +457,33 @@ export const useAdventureStore = defineStore('adventure', {
       } catch {
         // 持久化失败不阻塞 UI
       }
+    },
+    async updateExperience(text: string) {
+      if (!this.currentSave) return
+      this.currentSave = { ...this.currentSave, experience: text }
+      try {
+        await this.persistState()
+      } catch {
+        // 持久化失败不阻塞 UI
+      }
+    },
+    // 每 10 页自动存档（设置开启时）：存档名"自动存档-X"（X 为存档时的具体页码）
+    // 若已存在同页号自动存档则先覆盖删除，避免列表膨胀
+    async autoSaveIfDue(pageNumber: number) {
+      const worldId = this.worldId
+      const world = useWorldStore().currentWorld
+      if (!worldId || !this.currentSave || !world) return
+      const enabled = useSettingsStore().autoSave
+      if (!enabled || pageNumber < 1 || pageNumber % 10 !== 0) return
+      const autoName = `自动存档-${pageNumber}`
+      const stale = this.savePoints.filter((sp) => sp.name === autoName)
+      for (const sp of stale) {
+        await deleteSavePoint(sp.id)
+      }
+      if (stale.length > 0) {
+        this.savePoints = this.savePoints.filter((sp) => sp.name !== autoName)
+      }
+      await this.createSavePoint(autoName)
     },
     exportAdventure(): unknown | null {
       const world = useWorldStore().currentWorld

@@ -47,7 +47,8 @@ export interface SaveData {
   inventory: InventoryData
   map: MapLocation[]
   characters: CharacterEntry[]
-  characterProfile: string // 角色设定
+  characterProfile: string // 角色设定（人设：出身、性格等相对稳定的背景，更新时需保持稳定）
+  experience: string // 角色经历（冒险以来的经历概述，随剧情持续更新，与人设分开记录）
   overview: OverviewData
   hidden: Record<string, string> // 隐藏条目（状态页不显示，仅作 AI 参考）
   worldTime?: string // 世界时钟（自然语言，如"启程后第12天·深秋·入夜前"，AI 每轮维护，避免时间线错乱）
@@ -179,6 +180,7 @@ export function createEmptySave(panelSchema: PanelField[]): SaveData {
     map: [],
     characters: [],
     characterProfile: '',
+    experience: '',
     overview: {
       impression: '',
       ongoing: '',

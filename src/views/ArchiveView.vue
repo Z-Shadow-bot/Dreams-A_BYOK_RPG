@@ -2,11 +2,13 @@
 import { ref, watch } from 'vue'
 import { useAdventureStore } from '@/stores/adventure'
 import { useWorldStore } from '@/stores/world'
+import { useSettingsStore } from '@/stores/settings'
 import { downloadJSON, downloadText, pickJSONFile, safeFilename, timestamp } from '@/utils/file'
 import type { SavePoint } from '@/types'
 
 const adventure = useAdventureStore()
 const worldStore = useWorldStore()
+const settings = useSettingsStore()
 const name = ref('')
 const confirmId = ref<string | null>(null)
 const confirmRestart = ref(false)
@@ -213,6 +215,16 @@ async function exportNovel() {
       />
     </div>
 
+    <label v-if="adventure.hasAdventure" class="auto-save-row">
+      <input
+        type="checkbox"
+        :checked="settings.autoSave"
+        @change="settings.setAutoSave(($event.target as HTMLInputElement).checked)"
+      />
+      <span class="auto-save-label">每 10 页自动存档</span>
+      <span class="auto-save-hint">剧情推进每满 10 页自动生成一个存档点</span>
+    </label>
+
     <p v-if="importError" class="restart-error">⚠ {{ importError }}</p>
 
     <p
@@ -380,6 +392,27 @@ async function exportNovel() {
   color: var(--text);
 }
 .range-sep {
+  color: var(--muted);
+}
+.auto-save-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  cursor: pointer;
+}
+.auto-save-row input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  flex: none;
+}
+.auto-save-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+.auto-save-hint {
+  font-size: 12px;
   color: var(--muted);
 }
 </style>

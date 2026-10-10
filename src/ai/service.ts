@@ -100,6 +100,7 @@ export function normalizeSave(raw: unknown, panelSchema: PanelField[]): SaveData
     map: (Array.isArray(r.map) ? r.map : []).map(normalizeLocation),
     characters: (Array.isArray(r.characters) ? r.characters : []).map(normalizeCharacter),
     characterProfile: asString(r.characterProfile),
+    experience: asString(r.experience),
     overview: {
       impression: asString(r.overview?.impression),
       ongoing: asString(r.overview?.ongoing),
@@ -114,6 +115,14 @@ export function normalizeSave(raw: unknown, panelSchema: PanelField[]): SaveData
 function normalizeOptions(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
   return raw.filter((x): x is string => typeof x === 'string').slice(0, 3)
+}
+
+// 手动更新设定开关：开启后 AI 生成的存档不得修改玩家角色人设（characterProfile 强制保持原值）
+function lockProfileIfNeeded(save: SaveData, base: SaveData): SaveData {
+  if (useSettingsStore().manualProfile) {
+    save.characterProfile = base.characterProfile
+  }
+  return save
 }
 
 // 归一化单条世界书条目（AI 返回无 id，由这里分配）
@@ -236,7 +245,7 @@ export async function generateAction(
     return {
       narration: typeof data.narration === 'string' ? data.narration : '',
       options: normalizeOptions(data.options),
-      save: normalizeSave(data.save, world.panelSchema),
+      save: lockProfileIfNeeded(normalizeSave(data.save, world.panelSchema), currentSave),
       loreUpdates: normalizeLorebook(data.loreUpdates),
     }
   } catch (e) {
@@ -261,6 +270,7 @@ export function applySavePatch(base: SaveData, patch: unknown): SaveData {
     }
   }
   if (typeof p.characterProfile === 'string') out.characterProfile = p.characterProfile
+  if (typeof p.experience === 'string') out.experience = p.experience
   if (typeof p.worldTime === 'string') out.worldTime = p.worldTime
   if (p.overview && typeof p.overview === 'object' && !Array.isArray(p.overview)) {
     const o = p.overview as Record<string, unknown>
@@ -326,7 +336,7 @@ async function recoverAction(
       config,
     )
     const data = extractJson(content) as Record<string, any>
-    const patched = applySavePatch(currentSave, data.patchSave)
+    const patched = lockProfileIfNeeded(applySavePatch(currentSave, data.patchSave), currentSave)
     return {
       narration: typeof data.narration === 'string' ? data.narration : '',
       options: normalizeOptions(data.options),
@@ -362,7 +372,7 @@ async function recoverAction(
   return {
     narration,
     options,
-    save: normalizeSave(d2.save, world.panelSchema),
+    save: lockProfileIfNeeded(normalizeSave(d2.save, world.panelSchema), currentSave),
     loreUpdates: normalizeLorebook(d2.loreUpdates),
   }
 }
