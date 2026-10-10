@@ -262,7 +262,7 @@ async function exportNovel() {
         class="page-input interval-input"
         @input="onIntervalInput"
       />
-      <span class="auto-save-hint">页 / 次，按设定周期自动生成存档点，不会覆盖已有存档</span>
+      <span class="auto-save-hint">页 / 次，按设定周期自动生成存档点</span>
     </label>
 
     <p v-if="importError" class="restart-error">⚠ {{ importError }}</p>
@@ -455,7 +455,7 @@ async function exportNovel() {
   margin-bottom: 18px;
   cursor: pointer;
 }
-.auto-save-row input {
+.auto-save-row input[type='checkbox'] {
   width: 16px;
   height: 16px;
   cursor: pointer;
@@ -471,6 +471,7 @@ async function exportNovel() {
 }
 .interval-input {
   width: 56px;
+  flex: none;
 }
 .card-name-edit {
   width: 100%;
