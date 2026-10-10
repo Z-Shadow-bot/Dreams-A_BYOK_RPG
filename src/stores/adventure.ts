@@ -393,9 +393,30 @@ export const useAdventureStore = defineStore('adventure', {
       await deleteSavePoint(id)
       this.savePoints = this.savePoints.filter((sp) => sp.id !== id)
     },
+    async renameSavePoint(id: string, name: string) {
+      const sp = this.savePoints.find((x) => x.id === id)
+      if (!sp) return
+      const trimmed = name.trim()
+      if (!trimmed) return
+      const updated = { ...sp, name: trimmed }
+      await putSavePoint(updated)
+      const idx = this.savePoints.findIndex((x) => x.id === id)
+      if (idx >= 0) this.savePoints[idx] = updated
+    },
     async resetAdventure() {
       const worldId = this.worldId
       if (!worldId) return
+      // 重置前把世界设定恢复到"创建时的原始快照"（世界书与核心设定可能已被剧情/玩家更新，直接清档无法真正重新开始）
+      const worldStore = useWorldStore()
+      const w = worldStore.currentWorld
+      if (w?.original) {
+        await worldStore.updateWorld(w.id, {
+          worldSetting: w.original.worldSetting,
+          lorebook: w.original.lorebook,
+          panelSchema: w.original.panelSchema,
+        })
+        if (this.worldId !== worldId) return
+      }
       await deleteState(worldId)
       if (this.worldId !== worldId) return
       clearPendingRequest()
@@ -467,23 +488,17 @@ export const useAdventureStore = defineStore('adventure', {
         // 持久化失败不阻塞 UI
       }
     },
-    // 每 10 页自动存档（设置开启时）：存档名"自动存档-X"（X 为存档时的具体页码）
-    // 若已存在同页号自动存档则先覆盖删除，避免列表膨胀
+    // 自动存档（设置开启时）：按用户设定的周期（每 N 页）触发，存档名"自动存档-X"（X 为存档时的具体页码）
+    // 每次触发都新建，不覆盖旧自动存档，给玩家充足的读档机会
     async autoSaveIfDue(pageNumber: number) {
       const worldId = this.worldId
       const world = useWorldStore().currentWorld
       if (!worldId || !this.currentSave || !world) return
-      const enabled = useSettingsStore().autoSave
-      if (!enabled || pageNumber < 1 || pageNumber % 10 !== 0) return
-      const autoName = `自动存档-${pageNumber}`
-      const stale = this.savePoints.filter((sp) => sp.name === autoName)
-      for (const sp of stale) {
-        await deleteSavePoint(sp.id)
-      }
-      if (stale.length > 0) {
-        this.savePoints = this.savePoints.filter((sp) => sp.name !== autoName)
-      }
-      await this.createSavePoint(autoName)
+      const s = useSettingsStore()
+      if (!s.autoSave || pageNumber < 1) return
+      const interval = Math.max(1, Math.round(s.autoSaveInterval) || 10)
+      if (pageNumber % interval !== 0) return
+      await this.createSavePoint(`自动存档-${pageNumber}`)
     },
     exportAdventure(): unknown | null {
       const world = useWorldStore().currentWorld

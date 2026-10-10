@@ -49,6 +49,42 @@ const exporting = ref(false)
 const importing = ref(false)
 const dlcError = ref('')
 const importingDlc = ref(false)
+const renamingWorldId = ref<string | null>(null)
+const renamingWorldName = ref('')
+const duplicating = ref(false)
+const dupError = ref('')
+
+function startRenameWorld(w: World) {
+  renamingWorldId.value = w.id
+  renamingWorldName.value = w.name
+}
+
+async function commitRenameWorld(w: World) {
+  if (renamingWorldId.value !== w.id) return
+  const newName = renamingWorldName.value.trim()
+  renamingWorldId.value = null
+  if (!newName || newName === w.name) return
+  try {
+    await worldStore.updateWorld(w.id, { name: newName })
+  } catch (e) {
+    deleteError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function doDuplicate(w: World) {
+  dupError.value = ''
+  duplicating.value = true
+  try {
+    const copy = await worldStore.duplicateWorld(w.id)
+    if (copy) {
+      await adventure.open(copy.id)
+    }
+  } catch (e) {
+    dupError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    duplicating.value = false
+  }
+}
 
 function selectWorld(id: string) {
   confirmDeleteId.value = null
@@ -327,6 +363,7 @@ async function doImportDlc() {
     <p v-if="deleteError" class="delete-error">⚠ 删除失败：{{ deleteError }}</p>
     <p v-if="importError" class="delete-error">⚠ 导入失败：{{ importError }}</p>
     <p v-if="dlcError" class="delete-error">⚠ DLC 导入失败：{{ dlcError }}</p>
+    <p v-if="dupError" class="delete-error">⚠ 复制失败：{{ dupError }}</p>
 
     <div class="world-list">
       <div
@@ -337,11 +374,29 @@ async function doImportDlc() {
         @click="selectWorld(w.id)"
       >
         <div class="card-top">
-          <div class="world-name">
+          <input
+            v-if="renamingWorldId === w.id"
+            v-model="renamingWorldName"
+            class="input world-name-edit"
+            maxlength="60"
+            @keyup.enter="commitRenameWorld(w)"
+            @keyup.esc="renamingWorldId = null"
+            @blur="commitRenameWorld(w)"
+            @click.stop
+          />
+          <div
+            v-else
+            class="world-name"
+            :title="'双击重命名'"
+            @dblclick.stop="startRenameWorld(w)"
+          >
             {{ w.name }}
             <span v-if="w.dlcId" class="dlc-badge">DLC</span>
           </div>
           <div class="card-btns">
+            <button class="edit-btn" :disabled="duplicating" @click.stop="doDuplicate(w)">
+              复制
+            </button>
             <button class="edit-btn" @click.stop="openEdit(w)">设定</button>
             <button class="edit-btn" :disabled="exporting" @click.stop="exportWorld(w)">
               {{ exporting ? '导出中…' : '导出' }}
@@ -355,7 +410,7 @@ async function doImportDlc() {
             </button>
           </div>
         </div>
-        <div class="world-meta">更新于 {{ formatTime(Number(w.updatedAt)) }}</div>
+        <div class="world-meta">更新于 {{ formatTime(Number(w.updatedAt)) }} · 双击名称可重命名</div>
       </div>
     </div>
 
@@ -521,6 +576,12 @@ async function doImportDlc() {
   font-weight: 600;
   margin-bottom: 6px;
   word-break: break-all;
+}
+.world-name-edit {
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  font-size: 16px;
+  font-weight: 600;
 }
 .delete-btn {
   flex: none;

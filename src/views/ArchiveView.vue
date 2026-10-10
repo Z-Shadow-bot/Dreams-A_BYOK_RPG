@@ -23,11 +23,25 @@ const novelFrom = ref(1)
 const novelTo = ref(1)
 const novelFromEdited = ref(false)
 const novelToEdited = ref(false)
+const editingSpId = ref<string | null>(null)
+const editingSpName = ref('')
+const autoSaveIntervalInput = ref(10)
+
+function onIntervalInput() {
+  const v = Math.round(autoSaveIntervalInput.value)
+  if (Number.isFinite(v) && v >= 1) {
+    void settings.setAutoSaveInterval(v)
+  }
+}
 
 watch(() => adventure.currentIndex, (idx) => {
   const current = idx >= 0 ? idx + 1 : 1
   if (!novelFromEdited.value) novelFrom.value = 1
   if (!novelToEdited.value) novelTo.value = current
+})
+
+watch(() => settings.autoSaveInterval, (v) => {
+  autoSaveIntervalInput.value = v
 })
 
 async function save() {
@@ -62,6 +76,24 @@ async function remove(id: string) {
   opError.value = ''
   try {
     await adventure.removeSavePoint(id)
+  } catch (e) {
+    opError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+function startRename(sp: SavePoint) {
+  editingSpId.value = sp.id
+  editingSpName.value = sp.name
+}
+
+async function commitRename(sp: SavePoint) {
+  if (editingSpId.value !== sp.id) return
+  const newName = editingSpName.value.trim()
+  editingSpId.value = null
+  if (!newName || newName === sp.name) return
+  opError.value = ''
+  try {
+    await adventure.renameSavePoint(sp.id, newName)
   } catch (e) {
     opError.value = e instanceof Error ? e.message : String(e)
   }
@@ -221,8 +253,16 @@ async function exportNovel() {
         :checked="settings.autoSave"
         @change="settings.setAutoSave(($event.target as HTMLInputElement).checked)"
       />
-      <span class="auto-save-label">每 10 页自动存档</span>
-      <span class="auto-save-hint">剧情推进每满 10 页自动生成一个存档点</span>
+      <span class="auto-save-label">自动存档</span>
+      <input
+        v-model.number="autoSaveIntervalInput"
+        type="number"
+        min="1"
+        max="100"
+        class="page-input interval-input"
+        @input="onIntervalInput"
+      />
+      <span class="auto-save-hint">页 / 次，按设定周期自动生成存档点，不会覆盖已有存档</span>
     </label>
 
     <p v-if="importError" class="restart-error">⚠ {{ importError }}</p>
@@ -236,8 +276,22 @@ async function exportNovel() {
 
     <div v-if="adventure.savePoints.length > 0" class="list">
       <div v-for="sp in adventure.savePoints" :key="sp.id" class="card">
-        <div class="card-name">{{ sp.name }}</div>
-        <div class="card-meta">第 {{ sp.pageIndex + 1 }} 页 · {{ formatTime(Number(sp.createdAt)) }}</div>
+        <input
+          v-if="editingSpId === sp.id"
+          v-model="editingSpName"
+          class="input card-name-edit"
+          maxlength="60"
+          @keyup.enter="commitRename(sp)"
+          @keyup.esc="editingSpId = null"
+          @blur="commitRename(sp)"
+        />
+        <div
+          v-else
+          class="card-name"
+          :title="'双击重命名'"
+          @dblclick="startRename(sp)"
+        >{{ sp.name }}</div>
+        <div class="card-meta">第 {{ sp.pageIndex + 1 }} 页 · {{ formatTime(Number(sp.createdAt)) }} · 双击名称可重命名</div>
         <div class="card-actions">
           <button
             class="btn-load"
@@ -414,5 +468,14 @@ async function exportNovel() {
 .auto-save-hint {
   font-size: 12px;
   color: var(--muted);
+}
+.interval-input {
+  width: 56px;
+}
+.card-name-edit {
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 8px 10px;
+  font-size: 15px;
 }
 </style>

@@ -10,6 +10,7 @@ const BAG_DETAIL_KEY = 'bag_detail'
 const TRUNCATE_STRATEGY_KEY = 'truncate_strategy'
 const FAST_FORWARD_KEY = 'fast_forward'
 const AUTO_SAVE_KEY = 'auto_save'
+const AUTO_SAVE_INTERVAL_KEY = 'auto_save_interval'
 const MANUAL_PROFILE_KEY = 'manual_profile'
 
 const DEFAULT_CONFIG: APIConfig = {
@@ -34,7 +35,8 @@ export const useSettingsStore = defineStore('settings', {
     detailedBag: false, // 精细化背包描述：对物品生成更精细的 state 描述
     truncateStrategy: 'diff' as TruncateStrategy, // 输出截断自动重试策略：diff 精简修改指令 / split 拆分输出
     fastForward: false, // 快速推进叙事：省略无关细节，直接推进主线
-    autoSave: true, // 每 10 页自动存档
+    autoSave: true, // 自动存档
+    autoSaveInterval: 10, // 自动存档周期（每 N 页存档一次）
     manualProfile: false, // 手动更新设定：开启后 AI 不得修改玩家角色人设
   }),
   actions: {
@@ -86,6 +88,12 @@ export const useSettingsStore = defineStore('settings', {
         this.autoSave = a === false ? false : true
       } catch {
         this.autoSave = true
+      }
+      try {
+        const ai = await getSetting<number>(AUTO_SAVE_INTERVAL_KEY)
+        this.autoSaveInterval = typeof ai === 'number' && ai >= 1 ? Math.round(ai) : 10
+      } catch {
+        this.autoSaveInterval = 10
       }
       try {
         const m = await getSetting<boolean>(MANUAL_PROFILE_KEY)
@@ -154,6 +162,15 @@ export const useSettingsStore = defineStore('settings', {
         await putSetting(AUTO_SAVE_KEY, v)
       } catch {
         // 保存失败不阻塞开关生效
+      }
+    },
+    async setAutoSaveInterval(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v >= 1 ? Math.round(v) : 10
+      this.autoSaveInterval = n
+      try {
+        await putSetting(AUTO_SAVE_INTERVAL_KEY, n)
+      } catch {
+        // 保存失败不阻塞设置生效
       }
     },
     async setManualProfile(v: boolean) {

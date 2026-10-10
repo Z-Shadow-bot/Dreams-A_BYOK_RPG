@@ -35,6 +35,17 @@ export const useWorldStore = defineStore('world', {
     async load() {
       try {
         this.worlds = await listWorlds()
+        // 旧版本创建的世界没有原始快照：用当前值补一份，保证"重新开始冒险/复制世界"可用
+        for (const w of this.worlds) {
+          if (!w.original) {
+            w.original = {
+              worldSetting: w.worldSetting,
+              lorebook: w.lorebook ? JSON.parse(JSON.stringify(w.lorebook)) as LoreEntry[] : [],
+              panelSchema: JSON.parse(JSON.stringify(w.panelSchema)) as PanelField[],
+            }
+            await putWorld(w)
+          }
+        }
         // 默认选中最近更新的世界
         if (!this.currentWorldId && this.worlds.length > 0) {
           this.currentWorldId = this.worlds[0].id
@@ -59,6 +70,11 @@ export const useWorldStore = defineStore('world', {
       panelSchema,
       createdAt: now,
       updatedAt: now,
+      original: {
+        worldSetting,
+        lorebook: JSON.parse(JSON.stringify(lorebook)) as LoreEntry[],
+        panelSchema: JSON.parse(JSON.stringify(panelSchema)) as PanelField[],
+      },
     }
     await putWorld(world)
     this.worlds.unshift(world)
@@ -86,6 +102,11 @@ export const useWorldStore = defineStore('world', {
         panelSchema,
         createdAt: now,
         updatedAt: now,
+        original: {
+          worldSetting,
+          lorebook: dlc.lorebook ? JSON.parse(JSON.stringify(dlc.lorebook)) as LoreEntry[] : [],
+          panelSchema: JSON.parse(JSON.stringify(panelSchema)) as PanelField[],
+        },
         dlcId: dlc.dlcId,
         sceneField: dlc.sceneField,
         bgm: dlc.bgm,
@@ -100,8 +121,12 @@ export const useWorldStore = defineStore('world', {
       const w = this.worlds.find((x) => x.id === id)
       if (w?.dlcId) {
         if (isBgmFromDlc(w.dlcId)) await stopBgm()
-        await removeDlcAudio(w.dlcId)
-        clearBgmCache(w.dlcId)
+        // 多个世界可能共享同一 DLC 音乐资源（如"复制世界"生成的副本），仅当没有其他世界还在使用时才删除音频
+        const stillUsed = this.worlds.some((x) => x.id !== id && x.dlcId === w.dlcId)
+        if (!stillUsed) {
+          await removeDlcAudio(w.dlcId)
+          clearBgmCache(w.dlcId)
+        }
       }
       await deleteWorld(id)
       this.worlds = this.worlds.filter((w) => w.id !== id)
@@ -128,22 +153,63 @@ export const useWorldStore = defineStore('world', {
     },
     async updateWorld(
     id: string,
-    updates: { worldSetting?: string; panelSchema?: PanelField[]; lorebook?: LoreEntry[] },
+    updates: { name?: string; worldSetting?: string; panelSchema?: PanelField[]; lorebook?: LoreEntry[] },
   ) {
     const w = this.worlds.find((x) => x.id === id)
     if (!w) return
     const updated: World = {
       ...w,
+      name: updates.name !== undefined ? updates.name : w.name,
       worldSetting: updates.worldSetting !== undefined ? updates.worldSetting : w.worldSetting,
       panelSchema: updates.panelSchema !== undefined ? updates.panelSchema : w.panelSchema,
       lorebook: updates.lorebook !== undefined ? updates.lorebook : w.lorebook,
       updatedAt: Date.now(),
     }
     await putWorld(updated)
+    w.name = updated.name
     w.worldSetting = updated.worldSetting
     w.panelSchema = updated.panelSchema
     w.lorebook = updated.lorebook
     w.updatedAt = updated.updatedAt
+    },
+    // 基于世界的原始快照（旧世界无快照时用当前值）复制生成新世界，用于尝试多条冒险路线
+    async duplicateWorld(id: string): Promise<World | null> {
+      const src = this.worlds.find((w) => w.id === id)
+      if (!src) return null
+      const snapshot = src.original ?? {
+        worldSetting: src.worldSetting,
+        lorebook: src.lorebook ? JSON.parse(JSON.stringify(src.lorebook)) as LoreEntry[] : [],
+        panelSchema: JSON.parse(JSON.stringify(src.panelSchema)) as PanelField[],
+      }
+      let n = 1
+      let name = `${src.name}-副本1`
+      const existed = new Set(this.worlds.map((w) => w.name))
+      while (existed.has(name)) {
+        n += 1
+        name = `${src.name}-副本${n}`
+      }
+      const now = Date.now()
+      const world: World = {
+        id: createId(),
+        name,
+        worldSetting: snapshot.worldSetting,
+        lorebook: JSON.parse(JSON.stringify(snapshot.lorebook)) as LoreEntry[],
+        panelSchema: JSON.parse(JSON.stringify(snapshot.panelSchema)) as PanelField[],
+        createdAt: now,
+        updatedAt: now,
+        original: JSON.parse(JSON.stringify(snapshot)) as World['original'],
+        // 副本沿用 DLC 音乐与场景配置（与原件共享 dlcId 目录），预设角色选项一并保留
+        dlcId: src.dlcId,
+        sceneField: src.sceneField,
+        bgm: src.bgm ? JSON.parse(JSON.stringify(src.bgm)) : undefined,
+        presetCharacters: src.presetCharacters
+          ? JSON.parse(JSON.stringify(src.presetCharacters)) as PresetCharacter[]
+          : undefined,
+      }
+      await putWorld(world)
+      this.worlds.unshift(world)
+      this.currentWorldId = world.id
+      return world
     },
     // 更新 DLC 世界元数据（bgm/sceneField 等），用于重新导入同名 DLC 时保留存档
     async updateDlcWorldMeta(

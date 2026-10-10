@@ -64,6 +64,13 @@ export interface LoreEntry {
   hidden?: boolean // 隐藏条目（彩蛋NPC等，状态页世界书概览不显示；角色出场后通过 loreUpdates 移除此标记）
 }
 
+// ===== 世界原始快照（创建世界时保存：供"重新开始冒险"重置设定、"复制世界"生成副本使用） =====
+export interface WorldOriginal {
+  worldSetting: string
+  lorebook: LoreEntry[]
+  panelSchema: PanelField[]
+}
+
 // ===== 世界 =====
 export interface World {
   id: string
@@ -73,6 +80,7 @@ export interface World {
   panelSchema: PanelField[] // 角色面板字段定义
   createdAt: number
   updatedAt: number
+  original?: WorldOriginal // 创建时的原始设定快照（不含冒险内容）
   // 以下为 DLC 世界专属字段（可选）
   dlcId?: string // 关联的 DLC 唯一标识，同时作为音乐文件目录名
   sceneField?: string // 存档 panel 中标记「当前场景类型」的字段 key
