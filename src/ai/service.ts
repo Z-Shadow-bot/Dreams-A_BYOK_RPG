@@ -8,6 +8,7 @@ import {
   buildActionRecoveryDiffPrompt,
   buildActionRecoverySplitNarrationPrompt,
   buildActionRecoverySplitSavePrompt,
+  type AdventureRules,
 } from './prompts'
 import { useSettingsStore } from '@/stores/settings'
 import type {
@@ -316,13 +317,15 @@ export async function generateAction(
 ): Promise<AIResponse> {
   const { min, max } = narrationRange(config)
   const system = buildActionSystemPrompt(min, max, world, detailedBag)
+  const st = useSettingsStore()
+  const rules: AdventureRules = { reduceEvents: st.reduceEvents, difficulty: st.difficulty }
   try {
     const content = await chat(
       [
         { role: 'system', content: system },
         {
           role: 'user',
-          content: buildActionPrompt(world, currentSave, userInput, lastNarration, fastForward),
+          content: buildActionPrompt(world, currentSave, userInput, lastNarration, fastForward, rules),
         },
       ],
       config,
@@ -409,14 +412,16 @@ async function recoverAction(
 ): Promise<AIResponse> {
   const { min, max } = narrationRange(config)
   const system = buildActionSystemPrompt(min, max, world, detailedBag)
-  const strategy = useSettingsStore().truncateStrategy
+  const st = useSettingsStore()
+  const rules: AdventureRules = { reduceEvents: st.reduceEvents, difficulty: st.difficulty }
+  const strategy = st.truncateStrategy
   if (strategy === 'diff') {
     const content = await chat(
       [
         { role: 'system', content: system },
         {
           role: 'user',
-          content: buildActionRecoveryDiffPrompt(world, currentSave, userInput, lastNarration, fastForward),
+          content: buildActionRecoveryDiffPrompt(world, currentSave, userInput, lastNarration, fastForward, rules),
         },
       ],
       config,
@@ -436,7 +441,7 @@ async function recoverAction(
       { role: 'system', content: system },
       {
         role: 'user',
-        content: buildActionRecoverySplitNarrationPrompt(world, currentSave, userInput, lastNarration, fastForward),
+        content: buildActionRecoverySplitNarrationPrompt(world, currentSave, userInput, lastNarration, fastForward, rules),
       },
     ],
     config,

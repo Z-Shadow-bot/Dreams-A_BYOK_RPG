@@ -23,6 +23,18 @@ function onFastChange() {
   void settings.setFastForward(fastEnabled.value)
 }
 
+const adventureSettingsOpen = ref(false) // 冒险设置折叠栏
+const difficultyOrder = ['easy', 'normal', 'hard', 'nightmare'] as const
+const difficultyLabels = ['简单', '正常', '困难', '噩梦']
+const difficultyIndex = computed(() => {
+  const i = difficultyOrder.indexOf(settings.difficulty)
+  return i >= 0 ? i : 1
+})
+function onDifficultyInput(e: Event) {
+  const i = Number((e.target as HTMLInputElement).value)
+  void settings.setDifficulty(difficultyOrder[i] ?? 'normal')
+}
+
 const worldName = computed(() => worldStore.currentWorld?.name ?? '未选择世界')
 const currentPage = computed(() => adventure.currentPage)
 const pageIndicator = computed(() =>
@@ -243,10 +255,39 @@ async function rollback() {
       </div>
 
       <div v-if="isLatest" class="controls">
-        <label class="fast-row">
-          <input type="checkbox" v-model="fastEnabled" @change="onFastChange" />
-          <span>快速推进叙事（跳过细节，直推主线）</span>
-        </label>
+        <div class="adventure-settings">
+          <button class="settings-toggle" @click="adventureSettingsOpen = !adventureSettingsOpen">
+            <span>冒险设置</span>
+            <span class="settings-arrow">{{ adventureSettingsOpen ? '▾' : '▸' }}</span>
+          </button>
+          <template v-if="adventureSettingsOpen">
+            <label class="setting-row">
+              <span class="setting-label">快速推进叙事</span>
+              <input type="checkbox" v-model="fastEnabled" @change="onFastChange" />
+            </label>
+            <label class="setting-row">
+              <span class="setting-label">减少突发事件</span>
+              <input
+                type="checkbox"
+                :checked="settings.reduceEvents"
+                @change="settings.setReduceEvents(($event.target as HTMLInputElement).checked)"
+              />
+            </label>
+            <div class="setting-row">
+              <span class="setting-label">游戏难度</span>
+              <input
+                type="range"
+                class="difficulty-range"
+                min="0"
+                max="3"
+                step="1"
+                :value="difficultyIndex"
+                @input="onDifficultyInput"
+              />
+              <span class="difficulty-value">{{ difficultyLabels[difficultyIndex] }}</span>
+            </div>
+          </template>
+        </div>
         <button
           v-for="(o, i) in currentPage?.options ?? []"
           :key="i"
@@ -479,19 +520,60 @@ async function rollback() {
   gap: 10px;
   padding-bottom: 8px;
 }
-.fast-row {
+.adventure-settings {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.settings-toggle {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--muted);
+  justify-content: space-between;
+  background: var(--surface);
+  border: none;
+  color: var(--text);
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
-  line-height: 1.4;
 }
-.fast-row input {
+.settings-arrow {
+  color: var(--muted);
+  font-size: 13px;
+}
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.setting-label {
+  font-size: 13px;
+  color: var(--text);
+}
+.setting-row input[type='checkbox'] {
   width: 16px;
   height: 16px;
   cursor: pointer;
+  flex: none;
+}
+.difficulty-range {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--active);
+}
+.difficulty-value {
+  flex: none;
+  font-size: 13px;
+  color: var(--active);
+  font-weight: 600;
+  min-width: 44px;
+  text-align: right;
 }
 .option {
   text-align: left;

@@ -20,6 +20,8 @@ const FAST_FORWARD_KEY = 'fast_forward'
 const AUTO_SAVE_KEY = 'auto_save'
 const AUTO_SAVE_INTERVAL_KEY = 'auto_save_interval'
 const MANUAL_PROFILE_KEY = 'manual_profile'
+const REDUCE_EVENTS_KEY = 'reduce_events'
+const DIFFICULTY_KEY = 'difficulty'
 
 const DEFAULT_CONFIG: APIConfig = {
   baseUrl: '',
@@ -32,6 +34,8 @@ const DEFAULT_CONFIG: APIConfig = {
 }
 
 export type TruncateStrategy = 'diff' | 'split'
+
+export type Difficulty = 'easy' | 'normal' | 'hard' | 'nightmare'
 
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
@@ -47,6 +51,8 @@ export const useSettingsStore = defineStore('settings', {
     autoSave: true, // 自动存档
     autoSaveInterval: 10, // 自动存档周期（每 N 页存档一次）
     manualProfile: false, // 手动更新设定：开启后 AI 不得修改玩家角色人设
+    reduceEvents: false, // 减少突发事件：提示 AI 少安排打断玩家推进剧情的突发事件
+    difficulty: 'normal' as Difficulty, // 游戏难度：简单/正常/困难/噩梦，影响行动成功率与敌人强度
   }),
   actions: {
     async load() {
@@ -115,6 +121,19 @@ export const useSettingsStore = defineStore('settings', {
         this.manualProfile = !!m
       } catch {
         this.manualProfile = false
+      }
+      try {
+        const r = await getSetting<boolean>(REDUCE_EVENTS_KEY)
+        this.reduceEvents = !!r
+      } catch {
+        this.reduceEvents = false
+      }
+      try {
+        const d = await getSetting<string>(DIFFICULTY_KEY)
+        this.difficulty =
+          d === 'easy' || d === 'hard' || d === 'nightmare' ? d : 'normal'
+      } catch {
+        this.difficulty = 'normal'
       }
       this.loaded = true
     },
@@ -234,6 +253,22 @@ export const useSettingsStore = defineStore('settings', {
         await putSetting(MANUAL_PROFILE_KEY, v)
       } catch {
         // 保存失败不阻塞开关生效
+      }
+    },
+    async setReduceEvents(v: boolean) {
+      this.reduceEvents = v
+      try {
+        await putSetting(REDUCE_EVENTS_KEY, v)
+      } catch {
+        // 保存失败不阻塞开关生效
+      }
+    },
+    async setDifficulty(v: Difficulty) {
+      this.difficulty = v
+      try {
+        await putSetting(DIFFICULTY_KEY, v)
+      } catch {
+        // 保存失败不阻塞设置生效
       }
     },
   },

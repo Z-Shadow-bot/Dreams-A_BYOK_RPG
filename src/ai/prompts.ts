@@ -1,7 +1,38 @@
 import type { World, SaveData, PanelField, LoreEntry } from '@/types'
+import type { Difficulty } from '@/stores/settings'
 
 // 每轮注入世界书条目的预算上限（字符）
 const LORE_BUDGET = 4000
+
+// ===== 冒险设置规则（高优先级指令，生成"行动"时随本轮注入） =====
+export interface AdventureRules {
+  reduceEvents: boolean
+  difficulty: Difficulty
+}
+
+const REDUCE_EVENTS_RULE = '【减少突发事件（已开启，高优先级指令，务必遵守）】请避免安排会打断玩家正在推进的计划或【状态-概述】中"进行中的事项"的突发事件（例如赶路途中冒出的拦路劫匪、陌生人的临时求助、无关紧要的随机遭遇等）。让剧情平稳延续玩家当前行动与目标；如确有必要插入变化，用一两句话快速带过即可，不得喧宾夺主、不得偏离玩家意图。'
+
+function difficultyRule(d: Difficulty): string {
+  switch (d) {
+    case 'easy':
+      return '【简单难度（已开启）】幸运眷顾玩家：除完全违背世界规则或逻辑上绝无可能的举动外，玩家主动进行的大多数行动都会因恰到好处的好运而成功，结果略好于预期；尽量不为玩家设置需要碰撞运气的艰难障碍，让旅途轻松顺利。'
+    case 'hard':
+      return '【困难难度（已开启）】世界严酷且充满敌意：玩家采取冒险、鲁莽或准备不足的行动时，失败概率明显增加；游戏中会出现更多强大、难缠的敌人与棘手的阻碍，请如实呈现，要求玩家谨慎权衡、合理备战。'
+    case 'nightmare':
+      return '【噩梦难度（已开启）】世界危机四伏、审判无情：除十拿九稳的稳妥操作外，凡是需要赌运气或没有十足把握的行为，基本都会遭受失败与相应代价；强大的敌人与致命威胁显著增多，玩家必须精打细算地利用资源、谨慎规划每一步，否则寸步难行。'
+    default:
+      return ''
+  }
+}
+
+export function buildAdventureRulesPart(rules?: AdventureRules): string {
+  const parts: string[] = []
+  if (rules?.reduceEvents) parts.push(`- ${REDUCE_EVENTS_RULE}`)
+  const dr = difficultyRule(rules?.difficulty ?? 'normal')
+  if (dr) parts.push(`- ${dr}`)
+  if (parts.length === 0) return ''
+  return `\n\n【冒险设置指令（高优先级，随本轮生效，务必执行）】\n${parts.join('\n')}`
+}
 
 // ===== 全局规则（每次生成"行动"和"存档"时都必须遵守） =====
 export function buildGlobalRules(narrationMin: number, narrationMax: number): string {
@@ -396,6 +427,7 @@ export function buildActionPrompt(
   userInput: string,
   lastNarration?: string,
   fastForward?: boolean,
+  rules?: AdventureRules,
 ): string {
   const lastPart = lastNarration ? `【上一轮剧情供衔接参考】\n${lastNarration}\n\n` : ''
   const context = [
@@ -423,6 +455,7 @@ export function buildActionPrompt(
 - 每轮仍须完整更新存档与世界书（save / loreUpdates 不可省略），但 narration 聚焦主线进展。
 - 若当轮确实没有值得推进的主线内容，可用两三句话带过过程，把重点留给下轮更重要的节点。`
     : ''
+  const rulesPart = buildAdventureRulesPart(rules)
   return `${lorePart}
 
 ${lastPart}【当前存档（已是最新状态，须据此推进剧情并在行动后更新）】
@@ -432,7 +465,7 @@ ${stringifyCompact(currentSave)}
 若当前存档表明角色尚未正式开场（characterProfile 极简或标注待补充、name/race 等关键字段为空或默认值、overview.impression 显示待补充等），本轮「玩家行动」应理解为「对角色设定的补充」而非正式行动：据此完善 characterProfile 与面板字段，然后生成正式的开场叙事并拉开序幕；若信息仍不足，继续友善追问需要补充的内容，不强行开始剧情。
 
 【玩家行动】
-${userInput}${fastPart}`
+${userInput}${fastPart}${rulesPart}`
 }
 
 // 系统消息（行动场景用到）
@@ -498,10 +531,12 @@ export function buildActionRecoveryDiffPrompt(
   userInput: string,
   lastNarration: string | undefined,
   fastForward: boolean | undefined,
+  rules?: AdventureRules,
 ): string {
   const fastPart = fastForward
     ? `\n- 快速推进叙事已开启：省略环境与寒暄细节，直接推进主线关键节点。`
     : ''
+  const rulesPart = buildAdventureRulesPart(rules)
   return `上一次生成本轮行动的输出因过长被截断。现在用更精简的方式重新生成本轮结果，输出且只输出一个 JSON 对象：
 
 {
@@ -519,7 +554,7 @@ patchSave 格式说明（关键：这是修改指令，不是完整存档！）�
 
 ${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true)}
 
-${RECOVERY_JSON_RULE}${fastPart}`
+${RECOVERY_JSON_RULE}${fastPart}${rulesPart}`
 }
 
 // split 模式第 1 次：只生成叙事与选项
@@ -529,10 +564,12 @@ export function buildActionRecoverySplitNarrationPrompt(
   userInput: string,
   lastNarration: string | undefined,
   fastForward: boolean | undefined,
+  rules?: AdventureRules,
 ): string {
   const fastPart = fastForward
     ? `\n- 快速推进叙事已开启：省略环境与寒暄细节，直接推进主线关键节点。`
     : ''
+  const rulesPart = buildAdventureRulesPart(rules)
   return `上一轮输出因过长被截断，本轮拆成两次独立生成。这是第 1 次，你只输出一个 JSON 对象：
 {
   "narration": "本轮剧情推进的叙事（控制在 100-220 字以内，精简但完整）",
@@ -542,7 +579,7 @@ export function buildActionRecoverySplitNarrationPrompt(
 
 ${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true)}
 
-${RECOVERY_JSON_RULE}${fastPart}`
+${RECOVERY_JSON_RULE}${fastPart}${rulesPart}`
 }
 
 // split 模式第 2 次：基于第 1 次生成的叙事，只输出完整存档与世界书更新
