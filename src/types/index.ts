@@ -140,6 +140,7 @@ export interface SavePoint {
   name: string
   save: SaveData
   pageIndex: number // 保存时的页序号
+  pages?: StoryPage[] // 保存时的完整冒险页快照（读档时恢复，避免截断后无法找回后续页面）
   lorebook?: LoreEntry[] // 存档时的世界书快照（读档时恢复，避免时间线不一致）
   worldSetting?: string // 存档时的核心设定快照
   panelSchema?: PanelField[] // 存档时的面板字段快照
@@ -157,6 +158,19 @@ export interface APIConfig {
   maxWaitTime: number // 最大等待时间（秒），对应网络请求读取超时
   narrationMin?: number // 每轮叙事字数下限
   narrationMax?: number // 每轮叙事字数上限
+}
+
+// ===== 我的 API（保存多个配置，快速切换；apiKey 独立存 Keystore） =====
+export interface ApiProfile {
+  id: string
+  name: string
+  baseUrl: string
+  model: string
+  extraHeaders: Record<string, string>
+  temperature: number
+  maxWaitTime: number
+  narrationMin: number
+  narrationMax: number
 }
 
 // ===== AI 请求 / 响应 =====

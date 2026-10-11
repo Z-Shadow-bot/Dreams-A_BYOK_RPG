@@ -262,7 +262,7 @@ async function exportNovel() {
         class="page-input interval-input"
         @input="onIntervalInput"
       />
-      <span class="auto-save-hint">页 / 次，按设定周期自动生成存档点</span>
+      <span class="auto-save-hint">页/次</span>
     </label>
 
     <p v-if="importError" class="restart-error">⚠ {{ importError }}</p>

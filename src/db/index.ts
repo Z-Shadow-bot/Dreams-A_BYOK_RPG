@@ -157,6 +157,17 @@ export async function deletePagesFrom(worldId: string, fromIndex: number): Promi
   })
 }
 
+// 用完整页面快照替换某世界的全部冒险页（读档恢复用）
+export async function replacePages(worldId: string, pages: StoryPage[]): Promise<void> {
+  const keys = await withStore<IDBValidKey[]>(STORES.pages, 'readonly', (s) =>
+    req(s.index('worldId').getAllKeys(worldId)),
+  )
+  await withStore(STORES.pages, 'readwrite', (s) => {
+    for (const k of keys) s.delete(k)
+    for (const p of pages) s.put(deepClone(p))
+  })
+}
+
 // ===== 存档点 =====
 export async function listSavePoints(worldId: string): Promise<SavePoint[]> {
   const sps = await getAllByIndex<SavePoint>(STORES.savepoints, 'worldId', worldId)

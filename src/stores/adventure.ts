@@ -5,6 +5,7 @@ import {
   listPages,
   putPage,
   deletePagesFrom,
+  replacePages,
   deleteState,
   listSavePoints,
   putSavePoint,
@@ -364,6 +365,7 @@ export const useAdventureStore = defineStore('adventure', {
         name: name || `存档 ${this.savePoints.length + 1}`,
         save: clone(this.currentSave),
         pageIndex: this.pages.length - 1,
+        pages: clone(this.pages),
         lorebook: world && Array.isArray(world.lorebook) ? clone(world.lorebook) : undefined,
         worldSetting: world ? world.worldSetting : undefined,
         panelSchema: world ? clone(world.panelSchema) : undefined,
@@ -387,12 +389,24 @@ export const useAdventureStore = defineStore('adventure', {
       }
       const world = worldStore.currentWorld
       const newSave = world ? normalizeSave(sp.save, world.panelSchema) : clone(sp.save)
-      const allPages = await listPages(worldId)
-      if (this.worldId !== worldId) return
-      await deletePagesFrom(worldId, sp.pageIndex)
-      if (this.worldId !== worldId) return
+      // 优先使用完整页面快照恢复（存档内含故事页面，可完整读档）；
+      // 兼容无快照的旧存档点：按 pageIndex 从数据库截断
+      const snapshotPages =
+        Array.isArray(sp.pages) && sp.pages.length > 0
+          ? clone(sp.pages).sort((a, b) => a.index - b.index)
+          : null
+      if (snapshotPages) {
+        await replacePages(worldId, snapshotPages)
+        if (this.worldId !== worldId) return
+        this.pages = snapshotPages
+      } else {
+        const allPages = await listPages(worldId)
+        if (this.worldId !== worldId) return
+        await deletePagesFrom(worldId, sp.pageIndex)
+        if (this.worldId !== worldId) return
+        this.pages = allPages.filter((p) => p.index <= sp.pageIndex)
+      }
       this.currentSave = newSave
-      this.pages = allPages.filter((p) => p.index <= sp.pageIndex)
       this.currentIndex = this.pages.length > 0 ? this.pages.length - 1 : -1
       await this.persistState()
     },
@@ -599,12 +613,36 @@ export const useAdventureStore = defineStore('adventure', {
           if (!sp || typeof sp.name !== 'string') continue
           const origPageIndex = typeof sp.pageIndex === 'number' ? sp.pageIndex : 0
           const spLorebook = Array.isArray(sp.lorebook) ? normalizeImportedLorebook(sp.lorebook) : undefined
+          // 页面快照同样重新映射 index，保证读档能完整恢复故事页面
+          const spPages = Array.isArray(sp.pages)
+            ? (sp.pages as Array<Record<string, unknown>>)
+                .filter(
+                  (p) => p && typeof p.playerInput === 'string' && typeof p.narration === 'string',
+                )
+                .map((p) => {
+                  const orig = typeof p.index === 'number' ? (p.index as number) : 0
+                  const mapped: StoryPage = {
+                    id: createId(),
+                    worldId: world.id,
+                    index: indexMap.get(orig) ?? Math.min(orig, validRawPages.length - 1),
+                    playerInput: p.playerInput as string,
+                    narration: p.narration as string,
+                    options: Array.isArray(p.options)
+                      ? (p.options as unknown[]).filter((x) => typeof x === 'string') as string[]
+                      : [],
+                    createdAt: typeof p.createdAt === 'number' ? (p.createdAt as number) : Date.now(),
+                  }
+                  return mapped
+                })
+                .sort((a, b) => a.index - b.index)
+            : undefined
           await putSavePoint({
             id: createId(),
             worldId: world.id,
             name: sp.name,
             save: normalizeSave(sp.save, panelSchema),
             pageIndex: indexMap.get(origPageIndex) ?? Math.min(origPageIndex, validRawPages.length - 1),
+            pages: spPages && spPages.length > 0 ? spPages : undefined,
             lorebook: spLorebook,
             createdAt: typeof sp.createdAt === 'number' ? sp.createdAt : Date.now(),
           })

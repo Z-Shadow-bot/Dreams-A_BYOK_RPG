@@ -7,6 +7,7 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
 import { getStorageInfo, requestPersistentStorage, isStoragePersisted, formatBytes } from '@/utils/storage'
 import type { StorageInfo } from '@/utils/storage'
+import { createId } from '@/types'
 
 const settings = useSettingsStore()
 
@@ -65,6 +66,103 @@ function onModelChange() {
 
 function toggleDevMode() {
   settings.setDevMode(devMode.value)
+}
+
+// ===== 我的 API：多配置保存与快速切换 =====
+const myApiList = computed(() => settings.apiProfiles)
+const activeProfileId = computed(
+  () =>
+    settings.apiProfiles.find(
+      (p) => p.baseUrl === settings.config.baseUrl && p.model === settings.config.model,
+    )?.id ?? '',
+)
+
+async function switchProfile(id: string) {
+  await settings.switchApiProfile(id)
+  form.baseUrl = settings.config.baseUrl
+  form.model = settings.config.model
+  form.extraHeadersText = JSON.stringify(settings.config.extraHeaders ?? {}, null, 2)
+  form.temperature = settings.config.temperature
+  form.maxWaitTime = settings.config.maxWaitTime ?? 180
+  form.narrationMin = settings.config.narrationMin ?? 200
+  form.narrationMax = settings.config.narrationMax ?? 500
+  saved.value = true
+  setTimeout(() => (saved.value = false), 2000)
+}
+
+async function saveAsProfile() {
+  error.value = ''
+  let headers: Record<string, string> = {}
+  try {
+    const parsed = form.extraHeadersText.trim() ? JSON.parse(form.extraHeadersText) : {}
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      error.value = '额外请求头必须是合法的 JSON 对象'
+      return
+    }
+    headers = parsed as Record<string, string>
+  } catch {
+    error.value = '额外请求头必须是合法的 JSON 对象'
+    return
+  }
+  if (!form.model.trim() || !form.baseUrl.trim()) {
+    error.value = '请填写模型名称和 API 地址'
+    return
+  }
+  const temperature = Number(form.temperature)
+  const maxWaitTime = Number(form.maxWaitTime)
+  const narrationMin = Number(form.narrationMin)
+  const narrationMax = Number(form.narrationMax)
+  if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
+    error.value = '温度需在 0 ~ 2 之间'
+    return
+  }
+  if (!Number.isFinite(maxWaitTime) || maxWaitTime < 10) {
+    error.value = '最大等待时间需不小于 10 秒'
+    return
+  }
+  if (!Number.isFinite(narrationMin) || narrationMin < 50) {
+    error.value = '每轮叙事字数下限需不小于 50'
+    return
+  }
+  if (!Number.isFinite(narrationMax) || narrationMax > 5000) {
+    error.value = '每轮叙事字数上限需不大于 5000'
+    return
+  }
+  if (narrationMin > narrationMax) {
+    error.value = '每轮叙事字数下限不能大于上限'
+    return
+  }
+  const existing = settings.apiProfiles.find(
+    (p) => p.baseUrl === form.baseUrl.trim() && p.model === form.model.trim(),
+  )
+  const defaultName = form.model.trim() || '我的 API'
+  const name = window.prompt(
+    existing ? '该模型配置已在列表中，可修改名称以便区分，或直接确定' : '为这个 API 配置起一个名字（用于列表显示）',
+    existing?.name ?? defaultName,
+  )
+  if (name === null) return
+  await settings.saveApiProfile(
+    {
+      id: existing?.id ?? createId(),
+      name: name.trim() || defaultName,
+      baseUrl: form.baseUrl.trim(),
+      model: form.model.trim(),
+      extraHeaders: headers,
+      temperature,
+      maxWaitTime,
+      narrationMin,
+      narrationMax,
+    },
+    apiKey.value,
+  )
+  apiKey.value = ''
+  saved.value = true
+  setTimeout(() => (saved.value = false), 2000)
+}
+
+async function removeProfile(id: string, name: string) {
+  if (!window.confirm(`删除「${name}」？该配置保存的 API Key 也会一并移除。`)) return
+  await settings.removeApiProfile(id)
 }
 
 function setTruncateStrategy(mode: 'diff' | 'split') {
@@ -223,6 +321,25 @@ async function doClearLog() {
       <h1>我的</h1>
     </header>
 
+    <section class="block api-profiles-block">
+      <h3 class="block-title">我的 API</h3>
+      <p v-if="myApiList.length === 0" class="api-empty">
+        还没有保存的配置。在下方填好参数后点「保存为我的 API」，即可一键切换多个 API。
+      </p>
+      <div
+        v-for="p in myApiList"
+        :key="p.id"
+        class="api-item"
+        :class="{ active: activeProfileId === p.id }"
+      >
+        <button class="api-item-main" @click="switchProfile(p.id)">
+          <span class="api-name">{{ p.name }}</span>
+          <span class="api-model">{{ p.model }}</span>
+        </button>
+        <button class="api-del" @click="removeProfile(p.id, p.name)">✕</button>
+      </div>
+    </section>
+
     <section class="block">
       <h3 class="block-title">API 配置（OpenAI 兼容格式）</h3>
 
@@ -297,6 +414,7 @@ async function doClearLog() {
 
       <p v-if="error" class="error">{{ error }}</p>
       <button class="save-btn" @click="save">{{ saved ? '已保存 ✓' : '保存配置' }}</button>
+      <button class="save-btn ghost" @click="saveAsProfile">保存为我的 API（快速切换）</button>
 
       <label class="dev-row">
         <input type="checkbox" v-model="devMode" @change="toggleDevMode" />
@@ -452,6 +570,76 @@ async function doClearLog() {
   padding: 13px;
   margin-top: 18px;
   font-size: 15px;
+}
+.save-btn.ghost {
+  background: var(--surface-2);
+  color: var(--active);
+  border: 1px solid var(--border);
+  margin-top: 10px;
+}
+.api-profiles-block {
+  margin-bottom: 16px;
+}
+.api-empty {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+.api-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-top: 8px;
+}
+.api-item.active {
+  border-color: var(--active);
+  background: #0d1b2e;
+}
+.api-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+.api-name {
+  font-size: 14px;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.api-model {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.api-item.active .api-model {
+  color: var(--active);
+}
+.api-del {
+  flex: none;
+  background: transparent;
+  border: none;
+  color: var(--danger);
+  font-size: 15px;
+  padding: 4px 8px;
+  cursor: pointer;
 }
 .dev-row {
   display: flex;

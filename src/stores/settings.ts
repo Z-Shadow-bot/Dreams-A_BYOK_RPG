@@ -1,9 +1,17 @@
 import { defineStore } from 'pinia'
 import { getSetting, putSetting } from '@/db'
-import { getApiKey, saveApiKey, removeApiKey } from '@/ai/secure'
-import type { APIConfig } from '@/types'
+import {
+  getApiKey,
+  saveApiKey,
+  removeApiKey,
+  saveProfileKey,
+  getProfileKey,
+  removeProfileKey,
+} from '@/ai/secure'
+import type { APIConfig, ApiProfile } from '@/types'
 
 const CONFIG_KEY = 'api_config'
+const API_PROFILES_KEY = 'api_profiles'
 const DEV_MODE_KEY = 'dev_mode'
 const BGM_MUTED_KEY = 'bgm_muted'
 const BAG_DETAIL_KEY = 'bag_detail'
@@ -28,6 +36,7 @@ export type TruncateStrategy = 'diff' | 'split'
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
     config: { ...DEFAULT_CONFIG } as APIConfig,
+    apiProfiles: [] as ApiProfile[], // 我的 API：已保存的多个配置，可快速切换
     hasKey: false,
     loaded: false,
     devMode: false,
@@ -46,6 +55,12 @@ export const useSettingsStore = defineStore('settings', {
         if (saved) this.config = { ...DEFAULT_CONFIG, ...saved }
       } catch {
         // 配置读取失败，使用默认值
+      }
+      try {
+        const list = await getSetting<ApiProfile[]>(API_PROFILES_KEY)
+        this.apiProfiles = Array.isArray(list) ? list : []
+      } catch {
+        this.apiProfiles = []
       }
       try {
         const key = await getApiKey()
@@ -115,6 +130,46 @@ export const useSettingsStore = defineStore('settings', {
     async clearApiKey() {
       await removeApiKey()
       this.hasKey = false
+    },
+    // ===== 我的 API：多配置保存与快速切换 =====
+    async saveApiProfile(profile: ApiProfile, apiKey?: string) {
+      const idx = this.apiProfiles.findIndex((p) => p.id === profile.id)
+      if (idx >= 0) this.apiProfiles[idx] = profile
+      else this.apiProfiles.push(profile)
+      try {
+        await putSetting(API_PROFILES_KEY, this.apiProfiles)
+      } catch {
+        // 保存失败不阻塞内存生效
+      }
+      if (apiKey && apiKey.trim()) {
+        await saveProfileKey(profile.id, apiKey.trim())
+      }
+    },
+    async removeApiProfile(id: string) {
+      this.apiProfiles = this.apiProfiles.filter((p) => p.id !== id)
+      try {
+        await putSetting(API_PROFILES_KEY, this.apiProfiles)
+      } catch {
+        // 保存失败不阻塞内存生效
+      }
+      await removeProfileKey(id)
+    },
+    async switchApiProfile(id: string) {
+      const p = this.apiProfiles.find((x) => x.id === id)
+      if (!p) return
+      await this.saveConfig({
+        baseUrl: p.baseUrl,
+        model: p.model,
+        extraHeaders: p.extraHeaders ?? {},
+        temperature: p.temperature,
+        maxWaitTime: p.maxWaitTime,
+        narrationMin: p.narrationMin ?? 200,
+        narrationMax: p.narrationMax ?? 500,
+      })
+      const key = await getProfileKey(id)
+      if (key) {
+        await this.setApiKey(key)
+      }
     },
     async setDevMode(v: boolean) {
       this.devMode = v
