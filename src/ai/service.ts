@@ -125,6 +125,90 @@ function lockProfileIfNeeded(save: SaveData, base: SaveData): SaveData {
   return save
 }
 
+// 将 AI 返回的存档与当前存档智能合并（字段级增量更新）：
+// AI 返回了某字段 → 用 AI 的值覆盖；未返回 → 保留旧值。
+// 这样即使模型在某轮漏填/漏返回部分字段，也不会清空面板、背包、地图、人物等已有数据。
+// 明确表示"清空"只需要 AI 返回空字符串或空数组。
+export function mergeSave(base: SaveData, raw: unknown, panelSchema: PanelField[]): SaveData {
+  const out: SaveData = JSON.parse(JSON.stringify(base)) as SaveData
+  const r = (raw ?? {}) as Record<string, any>
+
+  // 面板：仅覆盖 AI 明确返回的键，未返回的键保留原值
+  if (r.panel && typeof r.panel === 'object' && !Array.isArray(r.panel)) {
+    const rp = r.panel as Record<string, unknown>
+    for (const f of panelSchema) {
+      const v = rp[f.key]
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        ;(out.panel as Record<string, string | number>)[f.key] = f.type === 'number' ? v : String(v)
+      } else if (typeof v === 'string' && v.trim() !== '') {
+        const n = Number(v)
+        ;(out.panel as Record<string, string | number>)[f.key] = f.type === 'number' && Number.isFinite(n) ? n : v
+      }
+    }
+  }
+
+  // 数组字段：AI 明确返回数组才整体替换（缺失 = 未更新；空数组 = 明确清空）
+  if (r.inventory && typeof r.inventory === 'object' && !Array.isArray(r.inventory)) {
+    const inv = r.inventory as Record<string, unknown>
+    if (Array.isArray(inv.equipment)) out.inventory.equipment = inv.equipment.map(normalizeItem)
+    if (Array.isArray(inv.items)) out.inventory.items = inv.items.map(normalizeItem)
+  }
+  if (Array.isArray(r.map)) out.map = r.map.map(normalizeLocation)
+  if (Array.isArray(r.characters)) out.characters = r.characters.map(normalizeCharacter)
+
+  // 字符串字段：AI 返回字符串才覆盖（空字符串 = 明确清空；缺失 = 未更新）
+  if (typeof r.characterProfile === 'string') out.characterProfile = r.characterProfile
+  if (typeof r.experience === 'string') out.experience = r.experience
+  if (typeof r.worldTime === 'string') out.worldTime = r.worldTime
+
+  // 概览：逐项合并
+  if (r.overview && typeof r.overview === 'object' && !Array.isArray(r.overview)) {
+    const o = r.overview as Record<string, unknown>
+    if (typeof o.impression === 'string') out.overview.impression = o.impression
+    if (typeof o.ongoing === 'string') out.overview.ongoing = o.ongoing
+    if (Array.isArray(o.recentEvents)) {
+      out.overview.recentEvents = o.recentEvents.filter((x): x is string => typeof x === 'string')
+    }
+    if (typeof o.latestProgress === 'string') out.overview.latestProgress = o.latestProgress
+  }
+
+  // 隐藏记录：AI 返回对象才应用（支持 add/remove 指令或整体对象）
+  if (r.hidden && typeof r.hidden === 'object' && !Array.isArray(r.hidden)) {
+    const h = r.hidden as Record<string, any>
+    if (h.add && typeof h.add === 'object' && !Array.isArray(h.add)) {
+      for (const [k, v] of Object.entries(h.add as Record<string, unknown>)) {
+        if (typeof v === 'string') out.hidden[k] = v
+        else if (v !== undefined && v !== null) {
+          try {
+            out.hidden[k] = JSON.stringify(v)
+          } catch {
+            // 不可序列化的值忽略
+          }
+        }
+      }
+    }
+    if (Array.isArray(h.remove)) {
+      for (const k of h.remove) {
+        if (typeof k === 'string') delete out.hidden[k]
+      }
+    }
+    if (!h.add && !h.remove) {
+      for (const [k, v] of Object.entries(h)) {
+        if (typeof v === 'string') out.hidden[k] = v
+        else if (v !== undefined && v !== null) {
+          try {
+            out.hidden[k] = JSON.stringify(v)
+          } catch {
+            // 不可序列化的值忽略
+          }
+        }
+      }
+    }
+  }
+
+  return out
+}
+
 // 归一化单条世界书条目（AI 返回无 id，由这里分配）
 function normalizeLoreEntry(v: unknown): LoreEntry | null {
   const e = (v ?? {}) as Record<string, unknown>
@@ -247,7 +331,7 @@ export async function generateAction(
     return {
       narration: typeof data.narration === 'string' ? data.narration : '',
       options: normalizeOptions(data.options),
-      save: lockProfileIfNeeded(normalizeSave(data.save, world.panelSchema), currentSave),
+      save: lockProfileIfNeeded(mergeSave(currentSave, data.save, world.panelSchema), currentSave),
       loreUpdates: normalizeLorebook(data.loreUpdates),
     }
   } catch (e) {
@@ -374,7 +458,7 @@ async function recoverAction(
   return {
     narration,
     options,
-    save: lockProfileIfNeeded(normalizeSave(d2.save, world.panelSchema), currentSave),
+    save: lockProfileIfNeeded(mergeSave(currentSave, d2.save, world.panelSchema), currentSave),
     loreUpdates: normalizeLorebook(d2.loreUpdates),
   }
 }
