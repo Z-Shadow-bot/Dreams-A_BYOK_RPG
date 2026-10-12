@@ -22,6 +22,8 @@ const AUTO_SAVE_INTERVAL_KEY = 'auto_save_interval'
 const MANUAL_PROFILE_KEY = 'manual_profile'
 const REDUCE_EVENTS_KEY = 'reduce_events'
 const DIFFICULTY_KEY = 'difficulty'
+const ALLOW_REWRITE_KEY = 'allow_rewrite'
+const OPTION_FALLBACK_KEY = 'option_fallback'
 
 const DEFAULT_CONFIG: APIConfig = {
   baseUrl: '',
@@ -36,6 +38,8 @@ const DEFAULT_CONFIG: APIConfig = {
 export type TruncateStrategy = 'diff' | 'split'
 
 export type Difficulty = 'easy' | 'normal' | 'hard' | 'nightmare'
+
+export type OptionFallback = 'generic' | 'regenerate'
 
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
@@ -53,6 +57,8 @@ export const useSettingsStore = defineStore('settings', {
     manualProfile: false, // 手动更新设定：开启后 AI 不得修改玩家角色人设
     reduceEvents: false, // 减少突发事件：提示 AI 少安排打断玩家推进剧情的突发事件
     difficulty: 'normal' as Difficulty, // 游戏难度：简单/正常/困难/噩梦，影响行动成功率与敌人强度
+    allowRewrite: false, // 允许改写：开启后双击最新页面可编辑，行动前 AI 先同步改写内容
+    optionFallback: 'generic' as OptionFallback, // AI 未正常生成选项时的兜底：generic 通用兜底选项 / regenerate 追加补全请求
   }),
   actions: {
     async load() {
@@ -134,6 +140,18 @@ export const useSettingsStore = defineStore('settings', {
           d === 'easy' || d === 'hard' || d === 'nightmare' ? d : 'normal'
       } catch {
         this.difficulty = 'normal'
+      }
+      try {
+        const a = await getSetting<boolean>(ALLOW_REWRITE_KEY)
+        this.allowRewrite = !!a
+      } catch {
+        this.allowRewrite = false
+      }
+      try {
+        const o = await getSetting<string>(OPTION_FALLBACK_KEY)
+        this.optionFallback = o === 'regenerate' ? 'regenerate' : 'generic'
+      } catch {
+        this.optionFallback = 'generic'
       }
       this.loaded = true
     },
@@ -267,6 +285,22 @@ export const useSettingsStore = defineStore('settings', {
       this.difficulty = v
       try {
         await putSetting(DIFFICULTY_KEY, v)
+      } catch {
+        // 保存失败不阻塞设置生效
+      }
+    },
+    async setAllowRewrite(v: boolean) {
+      this.allowRewrite = v
+      try {
+        await putSetting(ALLOW_REWRITE_KEY, v)
+      } catch {
+        // 保存失败不阻塞开关生效
+      }
+    },
+    async setOptionFallback(v: OptionFallback) {
+      this.optionFallback = v
+      try {
+        await putSetting(OPTION_FALLBACK_KEY, v)
       } catch {
         // 保存失败不阻塞设置生效
       }

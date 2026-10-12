@@ -1,4 +1,4 @@
-import type { World, SaveData, PanelField, LoreEntry } from '@/types'
+import type { World, SaveData, PanelField, LoreEntry, StoryPage } from '@/types'
 import type { Difficulty } from '@/stores/settings'
 
 // 每轮注入世界书条目的预算上限（字符）
@@ -105,7 +105,7 @@ JSON 语法硬性要求（违反任一条都会导致解析失败）：
 - 不要输出多个 JSON 或把 JSON 包在别的文本里。
 
 注意：
-- options 给出的 2-3 个选项仅为参考建议，玩家可无视或自由输入；你必须始终按玩家的真实输入推进，选项不得变成"三条预设轨道"。
+- options 必须生成 2-3 个自然、可执行的下一步行动方向，数组不能为空、缺失或长度 0（这是硬性要求，违反即不合格）；它们仅为参考建议，玩家可无视或自由输入，你必须始终按玩家的真实输入推进，选项不得变成"三条预设轨道"。
 - narration 是面向玩家展示的正文，严格遵循信息边界，不得出现任何隐藏信息。
 - save 是更新后的完整存档，必须整体重写、严格按"存档结构"填写，不得增删字段、不得改动字段名。
 - loreUpdates 为可选字段：仅当本次剧情出现了值得长期记录的新设定（世界书尚未记载的新地点/人物/概念/事物，或需更新已有条目）时才返回；否则返回空数组 []。若世界书使用规则未提及 loreUpdates，则必须返回空数组。
@@ -602,4 +602,69 @@ ${narrationText}
 ${buildActionRecoveryBase(world, currentSave, userInput, narrationText, true)}
 
 ${RECOVERY_JSON_RULE}`
+}
+// 改写同步：玩家手动改写了最新一页的叙事，AI 据此修正存档与世界书（以改写版为准）
+export function buildRewriteSyncPrompt(
+
+  world: World,
+  currentSave: SaveData,
+  page: StoryPage,
+): string {
+  const context = [
+    page.playerInput,
+    page.narration,
+    ...Object.values(currentSave.panel).map((v) => String(v)),
+    currentSave.characterProfile,
+    currentSave.experience,
+    currentSave.overview.impression,
+    currentSave.overview.ongoing,
+    ...currentSave.map.map((m) => `${m.name} ${m.description}`),
+    ...currentSave.characters.map((c) => c.name),
+  ].join(' ')
+  const lorePart = buildLoreInjection(
+    world,
+    context,
+    world.sceneField ? String(currentSave.panel[world.sceneField] ?? '') : undefined,
+  )
+  return `${lorePart}
+
+【改写同步（高优先级指令，务必执行）】
+玩家手动改写了上一轮生成的叙事。请基于【改写后的叙事】检查当前存档与世界书，凡与改写内容存在矛盾、或改写引入的合理新情况尚未记录的地方，一律修正；以玩家改写版为唯一事实来源，不得试图恢复成改写前的说法。
+- 世界书：有需要同步的条目标题/内容变化时，通过 loreUpdates 返回更新（未变化则返回空数组 []）。
+- 存档：仅返回需要修改的字段（patch 语义，未列出的字段保持原样；数组字段 inventory.equipment / inventory.items / map / characters 有变化时提供完整新数组，无变化省略；hidden 用 { "add": {...}, "remove": [...] } 表达增量）。
+- 若改写内容与既有设定冲突，以改写内容为准，并相应调整设定描述使其自洽；若改写内容不影响任何数据，save 返回空对象 {}，loreUpdates 返回 []。
+- 不要输出 narration 或 options 字段。
+
+【上一轮的玩家行动】
+${page.playerInput}
+
+【改写后的叙事（以这个为准）】
+${page.narration}
+
+【当前存档】
+${stringifyCompact(currentSave)}
+
+JSON 语法硬性要求：键名与字符串值一律用英文双引号；字符串内换行写成 \\n；不要注释、尾逗号；只输出一个 JSON 对象。
+
+{
+  "save": { ...仅列出需要修改的字段（patch 语义）... },
+  "loreUpdates": [ { "title": ..., "tags": [...], "content": ..., "required": false, "fixed": false, "links": [...] } ]
+}`
+}
+// 选项补全：AI 未正常生成选项时，基于本页叙事补 3 个选项
+export function buildOptionsFallbackPrompt(narration: string): string {
+  return `你是文字冒险游戏的叙事引擎。上一轮的叙事已经生成，但可执行的下一步行动选项缺失或不足。请基于以下叙事，生成 3 个自然、可执行的下一步行动方向。
+
+只输出一个 JSON 对象，不要输出任何其他文字：
+{
+  "options": ["选项1", "选项2", "选项3"]
+}
+
+要求：
+- 选项必须是玩家可以执行的具体行动，简短（5-15 字），第二人称视角。
+- 选项应基于叙事中当前情境自然延伸，不要凭空捏造叙事中不存在的元素。
+- 3 个选项应提供不同的行动方向（如推进主线、探索环境、检查状态等）。
+
+【本轮叙事】
+${narration}`
 }

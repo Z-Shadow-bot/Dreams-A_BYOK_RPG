@@ -8,6 +8,8 @@ import {
   buildActionRecoveryDiffPrompt,
   buildActionRecoverySplitNarrationPrompt,
   buildActionRecoverySplitSavePrompt,
+  buildRewriteSyncPrompt,
+  buildOptionsFallbackPrompt,
   type AdventureRules,
 } from './prompts'
 import { useSettingsStore } from '@/stores/settings'
@@ -20,6 +22,7 @@ import type {
   MapLocation,
   PanelField,
   SaveData,
+  StoryPage,
   World,
 } from '@/types'
 import { createId } from '@/types'
@@ -347,6 +350,32 @@ export async function generateAction(
   }
 }
 
+// 通用兜底选项：AI 未生成选项时的默认行动方向
+const GENERIC_OPTIONS: string[] = ['继续前进', '环顾四周，观察环境', '查看自身状态']
+
+// 确保选项非空：AI 未正常生成选项时按用户设置兜底
+export async function ensureOptions(
+  options: string[],
+  narration: string,
+  config: APIConfig,
+  fallback: 'generic' | 'regenerate',
+): Promise<string[]> {
+  const valid = options.filter((o) => typeof o === 'string' && o.trim())
+  if (valid.length > 0) return valid.slice(0, 3)
+  if (fallback === 'generic') return [...GENERIC_OPTIONS]
+  try {
+    const content = await chat(
+      [{ role: 'user', content: buildOptionsFallbackPrompt(narration) }],
+      config,
+    )
+    const data = extractJson(content) as Record<string, any>
+    const regenerated = normalizeOptions(data.options)
+    return regenerated.length > 0 ? regenerated : [...GENERIC_OPTIONS]
+  } catch {
+    return [...GENERIC_OPTIONS]
+  }
+}
+
 // 将 patchSave 修改指令应用到现有存档上（只改列出的字段，数组字段整体替换）
 export function applySavePatch(base: SaveData, patch: unknown): SaveData {
   const out: SaveData = JSON.parse(JSON.stringify(base)) as SaveData
@@ -465,5 +494,40 @@ async function recoverAction(
     options,
     save: lockProfileIfNeeded(mergeSave(currentSave, d2.save, world.panelSchema), currentSave),
     loreUpdates: normalizeLorebook(d2.loreUpdates),
+  }
+}
+// 改写同步：玩家手动改写了最新页叙事后，在下一次行动前调用，
+// 让 AI 以改写版为准修正存档与世界书（patchSave 语义，只列变化）
+export async function syncAfterRewrite(
+  world: World,
+  currentSave: SaveData,
+  page: StoryPage,
+  config: APIConfig,
+  onRecoverStart?: () => void,
+): Promise<{ save: SaveData; loreUpdates: LoreEntry[] }> {
+  const { min, max } = narrationRange(config)
+  const system = buildActionSystemPrompt(min, max, world)
+  try {
+    const content = await chat(
+      [
+        { role: 'system', content: system },
+        { role: 'user', content: buildRewriteSyncPrompt(world, currentSave, page) },
+      ],
+      config,
+    )
+    const data = extractJson(content) as Record<string, any>
+    const patched = lockProfileIfNeeded(
+      applySavePatch(currentSave, data.patchSave ?? data.save ?? {}),
+      currentSave,
+    )
+    return {
+      save: patched,
+      loreUpdates: normalizeLorebook(data.loreUpdates),
+    }
+  } catch (e) {
+    if (e instanceof AIError && e.truncated) {
+      onRecoverStart?.()
+    }
+    throw e
   }
 }

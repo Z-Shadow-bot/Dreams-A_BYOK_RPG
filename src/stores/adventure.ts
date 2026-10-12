@@ -11,7 +11,7 @@ import {
   putSavePoint,
   deleteSavePoint,
 } from '@/db'
-import { generateAction, generateCharacter, normalizeSave } from '@/ai/service'
+import { generateAction, generateCharacter, normalizeSave, syncAfterRewrite, ensureOptions } from '@/ai/service'
 import { errorMessage } from '@/ai/client'
 import { createId } from '@/types'
 import type { SaveData, StoryPage, SavePoint, WorldState, PanelField, LoreEntry, World } from '@/types'
@@ -236,6 +236,7 @@ export const useAdventureStore = defineStore('adventure', {
           hiddenPreset,
         )
         if (this.worldId !== worldId) return
+        result.options = await ensureOptions(result.options, result.narration, config, useSettingsStore().optionFallback)
         await deletePagesFrom(worldId, -1)
         if (this.worldId !== worldId) return
         const merged = mergeLoreUpdates(freshWorld, result.loreUpdates)
@@ -292,6 +293,31 @@ export const useAdventureStore = defineStore('adventure', {
           : undefined
         const config = useSettingsStore().config
         const s = useSettingsStore()
+        // 玩家改写同步：若最新一页被改写，先让 AI 以改写版为准校正世界书与存档，再继续行动
+        const latestEdited = this.pages.length > 0 && this.pages[this.pages.length - 1].edited
+          ? this.pages[this.pages.length - 1]
+          : null
+        if (latestEdited) {
+          this.recoveryNote = '检测到页面改写，正在与世界书和存档同步…'
+          try {
+            const sync = await syncAfterRewrite(world, this.currentSave, latestEdited, config)
+            if (this.worldId !== worldId) return
+            this.currentSave = sync.save
+            const syncedMerged = mergeLoreUpdates(world, sync.loreUpdates)
+            if (syncedMerged) {
+              await useWorldStore().updateWorld(worldId, { lorebook: syncedMerged })
+            }
+            // 清除改写标记，避免每轮重复同步
+            const cleared = { ...latestEdited, edited: undefined }
+            this.pages[this.pages.length - 1] = cleared
+            await putPage(cleared)
+            this.recoveryNote = null
+          } catch (syncErr) {
+            this.recoveryNote = null
+            this.error = `改写同步失败（${errorMessage(syncErr, s.devMode)}），将按当前状态继续行动`
+          }
+          if (this.worldId !== worldId) return
+        }
         const result = await generateAction(
           world,
           this.currentSave,
@@ -305,6 +331,7 @@ export const useAdventureStore = defineStore('adventure', {
           },
         )
         if (this.worldId !== worldId) return
+        result.options = await ensureOptions(result.options, result.narration, config, s.optionFallback)
         // 彩蛋角色出场检测：检查 hidden lorebook 条目对应的角色是否出现在 characters 里
         if (world.lorebook) {
           for (const entry of world.lorebook) {
@@ -355,6 +382,15 @@ export const useAdventureStore = defineStore('adventure', {
       if (index >= 0 && index < this.pages.length) {
         this.currentIndex = index
       }
+    },
+    async rewritePage(index: number, newNarration: string) {
+      if (index < 0 || index >= this.pages.length) return
+      const trimmed = newNarration.trim()
+      if (!trimmed) return
+      const page = { ...this.pages[index], narration: trimmed, edited: true }
+      this.pages[index] = page
+      await putPage(page)
+      void useWorldStore().touch(this.worldId ?? '')
     },
     async createSavePoint(name: string) {
       if (!this.worldId || !this.currentSave || this.pages.length === 0) return

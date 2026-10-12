@@ -122,6 +122,7 @@ export interface StoryPage {
   narration: string // AI 叙事
   options: string[] // AI 给出的参考选项
   createdAt: number
+  edited?: boolean // 玩家手动改写过的页面（行动前 AI 需先同步改写内容）
 }
 
 // ===== 世界运行状态（当前存档 + 页历史） =====

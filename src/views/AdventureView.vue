@@ -35,6 +35,27 @@ function onDifficultyInput(e: Event) {
   void settings.setDifficulty(difficultyOrder[i] ?? 'normal')
 }
 
+// 允许改写：双击最新页内容可编辑，行动前 AI 先同步改写内容
+const editingPage = ref(false)
+const editText = ref('')
+function startRewrite() {
+  const p = adventure.currentPage
+  if (!p || !settings.allowRewrite || !isLatest.value || editingPage.value) return
+  editText.value = p.narration
+  editingPage.value = true
+}
+function cancelRewrite() {
+  editingPage.value = false
+  editText.value = ''
+}
+async function saveRewrite() {
+  const p = adventure.currentPage
+  if (!p) return
+  await adventure.rewritePage(adventure.currentIndex, editText.value)
+  editingPage.value = false
+  editText.value = ''
+}
+
 const worldName = computed(() => worldStore.currentWorld?.name ?? '未选择世界')
 const currentPage = computed(() => adventure.currentPage)
 const pageIndicator = computed(() =>
@@ -249,7 +270,27 @@ async function rollback() {
         <div ref="readerBody" class="reader-body">
           <div v-if="currentPage" class="ai-notice">内容由AI生成，仅供参考</div>
           <div v-if="currentPage" class="player-input">你的行动：{{ currentPage.playerInput }}</div>
-          <div class="narration">{{ currentPage?.narration }}</div>
+          <div class="narration" @dblclick="startRewrite">
+            <template v-if="editingPage">
+              <textarea
+                v-model="editText"
+                class="rewrite-input"
+                rows="10"
+                placeholder="修改本页内容…（Ctrl+Enter 完成 / Esc 取消）"
+                @keydown.esc.prevent="cancelRewrite"
+                @keydown.ctrl.enter.prevent="saveRewrite"
+                @keydown.meta.enter.prevent="saveRewrite"
+              ></textarea>
+              <div class="rewrite-btns">
+                <button class="rewrite-save" @click="saveRewrite">完成</button>
+                <button class="rewrite-cancel" @click="cancelRewrite">取消</button>
+              </div>
+            </template>
+            <template v-else>
+              <span>{{ currentPage?.narration }}</span>
+              <div v-if="isLatest && settings.allowRewrite" class="rewrite-hint">双击本页内容可编辑改写</div>
+            </template>
+          </div>
         </div>
         <button class="nav next" :disabled="!canNext" @click="next">›</button>
       </div>
@@ -286,6 +327,14 @@ async function rollback() {
               />
               <span class="difficulty-value">{{ difficultyLabels[difficultyIndex] }}</span>
             </div>
+            <label class="setting-row">
+              <span class="setting-label">允许改写</span>
+              <input
+                type="checkbox"
+                :checked="settings.allowRewrite"
+                @change="settings.setAllowRewrite(($event.target as HTMLInputElement).checked)"
+              />
+            </label>
           </template>
         </div>
         <button
@@ -507,6 +556,50 @@ async function rollback() {
   font-size: 13px;
   margin-bottom: 10px;
   line-height: 1.5;
+}
+.rewrite-hint {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 8px;
+  text-align: center;
+  opacity: 0.7;
+}
+.rewrite-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.rewrite-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+.rewrite-save {
+  background: var(--active);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rewrite-cancel {
+  background: var(--surface-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
 }
 .narration {
   font-size: 16px;

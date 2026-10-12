@@ -444,6 +444,29 @@ async function doClearLog() {
         <p class="truncate-hint">仅在输出被截断时自动触发重试；正常情况下仍为完整输出，保证记忆连续</p>
       </div>
 
+      <div class="truncate-group">
+        <p class="truncate-label">AI 选项未正常生成时</p>
+        <label class="radio-row">
+          <input
+            type="radio"
+            value="generic"
+            :checked="settings.optionFallback === 'generic'"
+            @change="settings.setOptionFallback('generic')"
+          />
+          <span>使用通用兜底选项（推荐）：直接填入固定的通用行动选项</span>
+        </label>
+        <label class="radio-row">
+          <input
+            type="radio"
+            value="regenerate"
+            :checked="settings.optionFallback === 'regenerate'"
+            @change="settings.setOptionFallback('regenerate')"
+          />
+          <span>追加一次补全请求：让 AI 基于本轮叙事重新生成选项（失败回退通用）</span>
+        </label>
+        <p class="truncate-hint">当 AI 返回的选项为空或缺失时自动触发，保证玩家总有可选行动</p>
+      </div>
+
       <div class="log-row">
         <button class="log-btn" :disabled="logBusy" @click="downloadLog">
           {{ logBusy ? '导出中…' : '导出运行日志' }}
