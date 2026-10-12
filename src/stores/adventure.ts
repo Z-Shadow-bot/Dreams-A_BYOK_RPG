@@ -338,7 +338,9 @@ export const useAdventureStore = defineStore('adventure', {
             if (!entry.hidden) continue
             const name = (entry.title ?? '').trim()
             if (!name) continue
-            const appeared = result.save.characters.some((c) => c.name.includes(name) || name.includes(c.name))
+            const appeared =
+              (result.save.activeCharacters ?? []).some((c) => c.includes(name) || name.includes(c)) ||
+              result.save.characters.some((c) => c.name.includes(name) || name.includes(c.name))
             if (!appeared) continue
             const playedKey = `easterEgg_${name}_played`
             if (result.save.hidden[playedKey]) continue

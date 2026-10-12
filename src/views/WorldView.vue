@@ -41,6 +41,8 @@ interface LoreEditRow {
   fixed?: boolean
   linksText: string
   hidden?: boolean
+  isLocation?: boolean
+  isCharacter?: boolean
 }
 const editLorebook = ref<LoreEditRow[]>([])
 const editLoreFilter = ref('')
@@ -173,6 +175,8 @@ function openEdit(w: World) {
     fixed: !!e.fixed,
     linksText: (e.links ?? []).join(', '),
     hidden: e.hidden,
+    isLocation: e.isLocation,
+    isCharacter: e.isCharacter,
   }))
   editLoreFilter.value = ''
   editError.value = ''
@@ -254,6 +258,8 @@ async function saveEdit() {
       fixed: r.fixed === true ? true : undefined,
       links: links.length > 0 ? links : undefined,
       hidden: r.hidden === true ? true : undefined,
+      isLocation: r.isLocation === true ? true : undefined,
+      isCharacter: r.isCharacter === true ? true : undefined,
     })
   }
   try {
