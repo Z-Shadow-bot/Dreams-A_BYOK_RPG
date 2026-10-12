@@ -45,8 +45,10 @@ export interface OverviewData {
 export interface SaveData {
   panel: Record<string, string | number> // 角色面板（按 panelSchema 填充）
   inventory: InventoryData
-  map: MapLocation[]
-  characters: CharacterEntry[]
+  map: MapLocation[] // 已废弃：地点信息改由世界书条目（isLocation）存储，保留字段仅兼容旧存档
+  characters: CharacterEntry[] // 已废弃：人物信息改由世界书条目（isCharacter）存储，保留字段仅兼容旧存档
+  activeLocations?: string[] // 当前正在交互/即将前往的地点名称，对应世界书条目强制注入
+  activeCharacters?: string[] // 当前正在交互/即将见面的人物名称，对应世界书条目强制注入
   characterProfile: string // 角色设定（人设：出身、性格等相对稳定的背景，更新时需保持稳定）
   experience: string // 角色经历（冒险以来的经历概述，随剧情持续更新，与人设分开记录）
   overview: OverviewData
@@ -64,6 +66,8 @@ export interface LoreEntry {
   fixed?: boolean // 固定：AI 不得通过 loreUpdates 修改此条目（用于不会改变的底层设定）
   links?: string[] // 关联条目标题列表：当本条目被注入时，这些标题对应的条目也会一并注入（仅展开一层）
   hidden?: boolean // 隐藏条目（彩蛋NPC等，状态页世界书概览不显示；角色出场后通过 loreUpdates 移除此标记）
+  isLocation?: boolean // 地点条目（AI 自动打上，不显示为标签，不需要玩家编辑；状态页"地图"从此类条目读取）
+  isCharacter?: boolean // 人物条目（AI 自动打上，不显示为标签，不需要玩家编辑；状态页"人物"从此类条目读取）
 }
 
 // ===== 世界原始快照（创建世界时保存：供"重新开始冒险"重置设定、"复制世界"生成副本使用） =====
@@ -204,6 +208,8 @@ export function createEmptySave(panelSchema: PanelField[]): SaveData {
     inventory: { equipment: [], items: [] },
     map: [],
     characters: [],
+    activeLocations: [],
+    activeCharacters: [],
     characterProfile: '',
     experience: '',
     overview: {

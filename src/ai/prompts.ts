@@ -120,8 +120,10 @@ export const SAVE_SCHEMA_DESC = `# 存档结构（save 字段的严格定义）
     "equipment": [ { "name": "装备名", "state": "状态(可选)", "quantity": 数量(可选) } ],
     "items": [ { "name": "物品名", "state": "状态(可选)", "quantity": 数量(可选) } ]
   },
-  "map": [ { "name": "地点名", "description": "简要情况", "people": ["位于此地的人物"], "visited": true } ],
-  "characters": [ { "name": "角色名", "introduction": "简要介绍", "attitude": "当前态度" } ],
+  "map": [],
+  "characters": [],
+  "activeLocations": ["当前所在地点", "正在前往的目的地"],
+  "activeCharacters": ["正在交互的人物", "即将见面/重逢的人物"],
   "characterProfile": "玩家所扮演角色的背景人设（出身、性格、外貌、信念等相对稳定的设定；除非剧情重大转折，否则保持不变）",
   "experience": "玩家角色的经历概述（冒险开始至今经历的重要事件概括，随剧情持续更新；与人设分开记录）",
   "overview": {
@@ -135,13 +137,16 @@ export const SAVE_SCHEMA_DESC = `# 存档结构（save 字段的严格定义）
 }
 
 关键规则：
+- map 与 characters 字段已废弃，始终保持空数组 []；地点和人物的详细信息全部通过 loreUpdates 写入世界书条目（isLocation/isCharacter 标记）。
+- activeLocations：当前正在交互的地点、正在前往的目的地名称列表。已离开且暂时不会返回的地点须移出；将要前往或计划回去的地点须保留或加入。对应名称的世界书条目会被强制注入上下文。
+- activeCharacters：当前正在交互的人物、即将见面或近期会重逢的人物名称列表。已分别且暂时不会再见面的人物须移出；将要见面或计划重逢的人物须保留或加入。对应名称的世界书条目会被强制注入上下文。
 - panel 的键名必须与"角色面板字段"清单中的英文 key 完全一致，不得用中文标签替代，不得增删键。
 - inventory.equipment（装备）与 inventory.items（普通物品）必须分开放置，不得混在一起。
 - characterProfile 与 experience 必须分开维护：characterProfile 记录稳定的人设背景，experience 记录随剧情演进的经历；两者不得互相混写、互相覆盖。更新存档时，除非剧情出现重大转折，否则 characterProfile 应保持原样，将变化写进 experience。
 - overview 四栏必须与存档其他部分保持一致，体现最新状态。
 - hidden 专用于幕后信息：不在状态栏显示，但作为后续剧情生成的参考；当玩家从角色视角可以得知该内容时，将它从 hidden 移除，改写进对应的可见字段。
 - worldTime 是全局世界时钟：每轮根据剧情推进的时间流逝更新它（包含"从开始至今的累计时间"+ 当前季节/时刻），用于保证时间线一致、判断"距上次见面/到访过了多久"；玩家行动若跨越数天数月，须相应推进 worldTime，并同步更新角色年龄（若面板含 age 字段）等随时间变化的量。
-- characters 数组必须按"最近接触"倒序排列：本轮接触、互动或主动提及/回想的人物排在最前，越久未见未提的越靠后；接触新人物时把该人物条目移到数组最前。`
+- activeCharacters 数组按"最近接触"倒序排列：本轮接触、互动或主动提及/回想的人物排在最前，越久未见未提的越靠后；接触新人物时把该人物移到数组最前。activeLocations 同理，当前所在地点排最前。`
 
 // ===== 组装函数 =====
 function panelSchemaToText(schema: PanelField[]): string {
@@ -206,7 +211,7 @@ export function bagDetailRule(enabled: boolean): string {
 // 根据"上下文文本"挑出本轮该注入的世界书条目并组装注入区文本；无世界书时返回空串
 // sceneValue：当前场景值（如 panel[sceneField]），tags 与场景值精确相等优先，其次双向包含
 // 上下文匹配：标签在上下文中出现的次数越多相关度越高（次数加权）
-export function buildLoreInjection(world: World, context: string, sceneValue?: string): string {
+export function buildLoreInjection(world: World, context: string, sceneValue?: string, activeNames?: string[]): string {
   const entries = world.lorebook ?? []
   if (entries.length === 0) return ''
   const scene = (sceneValue ?? '').trim()
@@ -249,6 +254,19 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
     picked.push(s.e)
     pickedIds.add(s.e.id)
     used += s.e.content.length
+  }
+  // activeNames 对应的条目强制注入（当前交互的地点/人物）
+  if (activeNames && activeNames.length > 0) {
+    const activeSet = new Set(activeNames.map((n) => n.trim()).filter((n) => !!n))
+    for (const s of scored) {
+      if (pickedIds.has(s.e.id)) continue
+      const title = (s.e.title ?? '').trim()
+      if (title && activeSet.has(title)) {
+        picked.push(s.e)
+        pickedIds.add(s.e.id)
+        used += s.e.content.length
+      }
+    }
   }
   // 其余条目按相关度填充剩余预算
   for (const s of scored) {
@@ -300,13 +318,20 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
 ${lines.join('\n')}
 
 # 世界书使用规则
-- 世界书条目必须与存档（map、characters、overview、inventory 等）保持一致，不得互相矛盾；若剧情推进改变了条目描述的事物，应通过 loreUpdates 同步更新该条目，并同时更新存档中对应的内容。
-- 若玩家指令与某条世界书设定冲突：不要拒绝玩家，也不得歪曲或悄悄改写设定来迎合玩家；应当推断"在该设定约束下，玩家行动会产生的合理、自然后果"并如实呈现。例如：石碑被设定为不可破坏，玩家执意挥锤猛砸，则锤柄崩裂、虎口震麻，石碑纹丝不动。
-- 存档 map 中玩家到访过的显著地点、以及重要的 NPC（对剧情有持续影响、或玩家后续可能回来找的人），应在世界书中保有对应条目（title 用地点名/人名，tags 含对应场景值与地点名/人名），记录地点详细情况与 NPC 的记忆、关系变化，通过 loreUpdates 新增或更新。仅露一面、无后续影响的龙套路人不必记录——若玩家日后寻找一个世界书中不存在的人或地点，应如实呈现"找不到"，而非凭空捏造。
-- 若剧情中出现了值得长期记录的新概念、新地点、新人物或新事物（世界书尚未记载、且对后续剧情有持续影响），请通过输出格式中的 loreUpdates 字段返回新增或更新条目（保留必要的 title/tags/content/required），同时确保存档 map/characters 等相应字段同步出现该内容；不要记录琐碎、一次性或不重要的细节。
-- 当玩家时隔较久重返旧地点或重遇旧人物时，应先根据已流逝的时间（参考存档 worldTime 与剧情上下文）对该世界书条目做合理演化——地点可能兴衰变化、人物可能因独立日程而离开或改变，不会停在原地等待——再据此读取与呈现；演化结果同时通过 loreUpdates 更新到世界书，并同步到存档 map/characters。
+- 世界书条目必须与存档（overview、inventory、activeLocations、activeCharacters 等）保持一致，不得互相矛盾；若剧情推进改变了条目描述的事物，应通过 loreUpdates 同步更新该条目。
+- 若玩家指令与某世界书设定冲突：不要拒绝玩家，也不得歪曲或悄悄改写设定来迎合玩家；应当推断"在该设定约束下，玩家行动会产生的合理、自然后果"并如实呈现。例如：石碑被设定为不可破坏，玩家执意挥锤猛砸，则锤柄崩裂、虎口震麻，石碑纹丝不动。
+- 地点与人物信息全部通过世界书条目存储：每个地点对应一个 isLocation:true 条目，每个人物对应一个 isCharacter:true 条目。条目 title 用地点名/人名，content 记录详细情况（地点描述、人物介绍与态度、记忆与关系变化等）。不要在存档 map/characters 中存储这些信息（始终保持空数组）。
+  - 地点条目的 tags 应包含该地点可能出现的人物名字、地点别名、相关势力/组织等，以便人物在场时能命中注入。
+  - 人物条目的 tags 应包含其所在地点的名字、人物别名、身份/职业等关联信息，以便玩家到达该地点或提及相关话题时能命中注入。
+  - 会四处游走的人物（如旅行商人、游侠）：tags 不要只写固定地点，而应包含其活动范围、身份特征（如"旅行商人""游侠"）、可能出现的场所类型等，让其在合适的情境自然命中而非绑定单一地点。
+- 去重规则：创建新地点/人物条目前，先检查世界书中是否已有同名（或名称相似）的条目；若有则更新已有条目，不得创建重复条目。同一地点/人物只能有一个对应条目。
+- 存档 activeLocations 维护：当前所在的地点排最前，正在前往的目的地次之；已离开且暂时不会返回的地点移出；将要前往或计划回去的地点保留或加入。activeCharacters 维护同理：本轮接触的人物排最前，越久未见的越靠后；已分别且暂时不会再见面的人物移出，将要见面或近期重逢的人物保留或加入。
+- 仅露一面、无后续影响的龙套路人不必记录为世界书条目——若玩家日后寻找一个世界书中不存在的人或地点，应如实呈现"找不到"，而非凭空捏造。
+- 若剧情中出现了值得长期记录的新概念、新地点、新人物或新事物（世界书尚未记载、且对后续剧情有持续影响），请通过输出格式中的 loreUpdates 字段返回新增或更新条目（保留必要的 title/tags/content/required/isLocation/isCharacter），不要记录琐碎、一次性或不重要的细节。
+- 当玩家时隔较久重返旧地点或重遇旧人物时，应先根据已流逝的时间（参考存档 worldTime 与剧情上下文）对该世界书条目做合理演化——地点可能兴衰变化、人物可能因独立日程而离开或改变，不会停在原地等待——再据此读取与呈现；演化结果同时通过 loreUpdates 更新到世界书。
 - 标注"隐藏·彩蛋"的条目是尚未出场的彩蛋角色/设定：不要主动让该角色出场，只在剧情自然发展遇到合理条件时（如旅途偶遇、城镇擦肩、任务交集）才让她出场；出场后通过 loreUpdates 更新该条目并移除 hidden 标记（在返回的条目中设 hidden 为 false 或省略），此后按普通世界书条目处理。
 - 标注"固定"的条目是不可更改的底层设定：不得通过 loreUpdates 修改或删除固定条目的 title/tags/content/fixed/links，可以在该条目描述的框架内展开剧情。
+- isLocation/isCharacter 标记由 AI 根据条目内容类型自动打上，不需要玩家编辑；地点条目打 isLocation:true，人物条目打 isCharacter:true，其他类型条目不打。
 - loreUpdates 仅在确实有更新时返回，否则返回空数组 []。`
 }
 
@@ -430,6 +455,10 @@ export function buildActionPrompt(
   rules?: AdventureRules,
 ): string {
   const lastPart = lastNarration ? `【上一轮剧情供衔接参考】\n${lastNarration}\n\n` : ''
+  const activeNames = [
+    ...(currentSave.activeLocations ?? []),
+    ...(currentSave.activeCharacters ?? []),
+  ]
   const context = [
     userInput,
     lastNarration ?? '',
@@ -438,13 +467,15 @@ export function buildActionPrompt(
     currentSave.experience,
     currentSave.overview.impression,
     currentSave.overview.ongoing,
-    ...currentSave.map.map((m) => `${m.name} ${m.description}`),
+    ...activeNames,
+    ...currentSave.map.map((m) => m.name),
     ...currentSave.characters.map((c) => c.name),
   ].join(' ')
   const lorePart = buildLoreInjection(
     world,
     context,
     world.sceneField ? String(currentSave.panel[world.sceneField] ?? '') : undefined,
+    activeNames,
   )
   const fastPart = fastForward
     ? `
@@ -495,6 +526,10 @@ function buildActionRecoveryBase(
   lastNarration: string | undefined,
   includeSave: boolean,
 ): string {
+  const activeNames = [
+    ...(currentSave.activeLocations ?? []),
+    ...(currentSave.activeCharacters ?? []),
+  ]
   const context = [
     userInput,
     lastNarration ?? '',
@@ -503,13 +538,15 @@ function buildActionRecoveryBase(
     currentSave.experience,
     currentSave.overview.impression,
     currentSave.overview.ongoing,
-    ...currentSave.map.map((m) => `${m.name} ${m.description}`),
+    ...activeNames,
+    ...currentSave.map.map((m) => m.name),
     ...currentSave.characters.map((c) => c.name),
   ].join(' ')
   const lorePart = buildLoreInjection(
     world,
     context,
     world.sceneField ? String(currentSave.panel[world.sceneField] ?? '') : undefined,
+    activeNames,
   )
   const lastPart = lastNarration ? `【上一轮剧情供衔接参考】\n${lastNarration}\n\n` : ''
   const savePart = includeSave
@@ -610,6 +647,10 @@ export function buildRewriteSyncPrompt(
   currentSave: SaveData,
   page: StoryPage,
 ): string {
+  const activeNames = [
+    ...(currentSave.activeLocations ?? []),
+    ...(currentSave.activeCharacters ?? []),
+  ]
   const context = [
     page.playerInput,
     page.narration,
@@ -618,13 +659,15 @@ export function buildRewriteSyncPrompt(
     currentSave.experience,
     currentSave.overview.impression,
     currentSave.overview.ongoing,
-    ...currentSave.map.map((m) => `${m.name} ${m.description}`),
+    ...activeNames,
+    ...currentSave.map.map((m) => m.name),
     ...currentSave.characters.map((c) => c.name),
   ].join(' ')
   const lorePart = buildLoreInjection(
     world,
     context,
     world.sceneField ? String(currentSave.panel[world.sceneField] ?? '') : undefined,
+    activeNames,
   )
   return `${lorePart}
 

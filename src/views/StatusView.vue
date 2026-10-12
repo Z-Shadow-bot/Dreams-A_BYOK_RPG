@@ -135,6 +135,62 @@ const loreOverview = computed(() => {
     }
   })
 })
+
+// 地图：优先从世界书 isLocation 条目读取，回退到存档 map（兼容旧存档）
+const mapList = computed(() => {
+  const world = worldStore.currentWorld
+  const loreLocations = (world?.lorebook ?? []).filter((e) => e.isLocation && !e.hidden)
+  if (loreLocations.length > 0) {
+    const active = save.value?.activeLocations ?? []
+    return loreLocations
+      .map((e) => ({
+        name: e.title ?? '（无标题）',
+        description: e.content,
+        active: active.includes((e.title ?? '').trim()),
+      }))
+      .sort((a, b) => {
+        const ai = active.indexOf(a.name)
+        const bi = active.indexOf(b.name)
+        if (ai >= 0 && bi >= 0) return ai - bi
+        if (ai >= 0) return -1
+        if (bi >= 0) return 1
+        return 0
+      })
+  }
+  return (save.value?.map ?? []).map((loc) => ({
+    name: loc.name,
+    description: loc.description,
+    active: false,
+  }))
+})
+
+// 人物：优先从世界书 isCharacter 条目读取，回退到存档 characters（兼容旧存档）
+const characterList = computed(() => {
+  const world = worldStore.currentWorld
+  const loreCharacters = (world?.lorebook ?? []).filter((e) => e.isCharacter && !e.hidden)
+  if (loreCharacters.length > 0) {
+    const active = save.value?.activeCharacters ?? []
+    return loreCharacters
+      .map((e) => ({
+        name: e.title ?? '（无标题）',
+        description: e.content,
+        active: active.includes((e.title ?? '').trim()),
+      }))
+      .sort((a, b) => {
+        const ai = active.indexOf(a.name)
+        const bi = active.indexOf(b.name)
+        if (ai >= 0 && bi >= 0) return ai - bi
+        if (ai >= 0) return -1
+        if (bi >= 0) return 1
+        return 0
+      })
+  }
+  return (save.value?.characters ?? []).map((c) => ({
+    name: c.name,
+    description: c.introduction,
+    active: false,
+  }))
+})
 </script>
 
 <template>
@@ -209,26 +265,25 @@ const loreOverview = computed(() => {
 
         <!-- 地图 -->
         <div v-else-if="activeTab === '地图'" class="list">
-          <p v-if="save.map.length === 0" class="muted">（暂无地点）</p>
-          <div v-for="(loc, i) in save.map" :key="i" class="card">
+          <p v-if="mapList.length === 0" class="muted">（暂无地点）</p>
+          <div v-for="(loc, i) in mapList" :key="i" class="card">
             <div class="card-head">
               <span class="card-name">{{ loc.name }}</span>
-              <span v-if="!loc.visited" class="badge">未到达</span>
+              <span v-if="loc.active" class="badge">当前</span>
             </div>
             <p class="card-desc">{{ loc.description }}</p>
-            <p v-if="loc.people.length" class="card-people">人物：{{ loc.people.join('、') }}</p>
           </div>
         </div>
 
         <!-- 人物 -->
         <div v-else-if="activeTab === '人物'" class="list">
-          <p v-if="save.characters.length === 0" class="muted">（尚未接触任何人物）</p>
-          <div v-for="(c, i) in save.characters" :key="i" class="card">
+          <p v-if="characterList.length === 0" class="muted">（尚未接触任何人物）</p>
+          <div v-for="(c, i) in characterList" :key="i" class="card">
             <div class="card-head">
               <span class="card-name">{{ c.name }}</span>
-              <span class="badge">{{ c.attitude }}</span>
+              <span v-if="c.active" class="badge">当前</span>
             </div>
-            <p class="card-desc">{{ c.introduction }}</p>
+            <p class="card-desc">{{ c.description }}</p>
           </div>
         </div>
 

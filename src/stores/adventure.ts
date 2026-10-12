@@ -69,7 +69,7 @@ function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreE
         }
         continue
       }
-      book[idx] = { ...book[idx], title: u.title, tags: u.tags, content: u.content, required: u.required, fixed: u.fixed, links: u.links, hidden: u.hidden }
+      book[idx] = { ...book[idx], title: u.title, tags: u.tags, content: u.content, required: u.required, fixed: u.fixed, links: u.links, hidden: u.hidden, isLocation: u.isLocation, isCharacter: u.isCharacter }
     } else {
       book.push({ ...u })
     }

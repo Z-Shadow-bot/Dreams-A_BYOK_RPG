@@ -103,6 +103,8 @@ export function normalizeSave(raw: unknown, panelSchema: PanelField[]): SaveData
     },
     map: (Array.isArray(r.map) ? r.map : []).map(normalizeLocation),
     characters: (Array.isArray(r.characters) ? r.characters : []).map(normalizeCharacter),
+    activeLocations: asStringArray(r.activeLocations),
+    activeCharacters: asStringArray(r.activeCharacters),
     characterProfile: asString(r.characterProfile),
     experience: asString(r.experience),
     overview: {
@@ -159,6 +161,8 @@ export function mergeSave(base: SaveData, raw: unknown, panelSchema: PanelField[
   }
   if (Array.isArray(r.map)) out.map = r.map.map(normalizeLocation)
   if (Array.isArray(r.characters)) out.characters = r.characters.map(normalizeCharacter)
+  if (Array.isArray(r.activeLocations)) out.activeLocations = asStringArray(r.activeLocations)
+  if (Array.isArray(r.activeCharacters)) out.activeCharacters = asStringArray(r.activeCharacters)
 
   // 字符串字段：AI 返回字符串才覆盖（空字符串 = 明确清空；缺失 = 未更新）
   if (typeof r.characterProfile === 'string') out.characterProfile = r.characterProfile
@@ -229,6 +233,8 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
     fixed: e.fixed === true ? true : undefined,
     links: asStringArray(e.links).map((t) => t.trim()).filter((t) => !!t),
     hidden: e.hidden === true ? true : undefined,
+    isLocation: e.isLocation === true ? true : undefined,
+    isCharacter: e.isCharacter === true ? true : undefined,
   }
 }
 
@@ -406,6 +412,8 @@ export function applySavePatch(base: SaveData, patch: unknown): SaveData {
   }
   if (Array.isArray(p.map)) out.map = p.map.map(normalizeLocation)
   if (Array.isArray(p.characters)) out.characters = p.characters.map(normalizeCharacter)
+  if (Array.isArray(p.activeLocations)) out.activeLocations = asStringArray(p.activeLocations)
+  if (Array.isArray(p.activeCharacters)) out.activeCharacters = asStringArray(p.activeCharacters)
   if (p.hidden && typeof p.hidden === 'object' && !Array.isArray(p.hidden)) {
     const h = p.hidden as Record<string, any>
     if (h.add && typeof h.add === 'object' && !Array.isArray(h.add)) {
