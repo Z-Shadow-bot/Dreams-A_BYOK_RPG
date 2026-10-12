@@ -14,7 +14,7 @@ import {
 import { generateAction, generateCharacter, normalizeSave, syncAfterRewrite, ensureOptions } from '@/ai/service'
 import { errorMessage } from '@/ai/client'
 import { createId } from '@/types'
-import type { SaveData, StoryPage, SavePoint, WorldState, PanelField, LoreEntry, World } from '@/types'
+import type { SaveData, StoryPage, SavePoint, WorldState, PanelField, LoreEntry, World, PresetCharacter } from '@/types'
 import { useSettingsStore } from './settings'
 import { useWorldStore, normalizeImportedLorebook } from './world'
 
@@ -570,6 +570,10 @@ export const useAdventureStore = defineStore('adventure', {
           worldSetting: world.worldSetting,
           lorebook: world.lorebook ? clone(world.lorebook) : [],
           panelSchema: world.panelSchema,
+          ...(world.dlcId ? { dlcId: world.dlcId } : {}),
+          ...(world.sceneField ? { sceneField: world.sceneField } : {}),
+          ...(world.bgm ? { bgm: clone(world.bgm) } : {}),
+          ...(world.presetCharacters ? { presetCharacters: clone(world.presetCharacters) } : {}),
         },
         currentSave: this.currentSave,
         currentIndex: this.currentIndex,
@@ -611,6 +615,39 @@ export const useAdventureStore = defineStore('adventure', {
       const rawLorebook = Array.isArray(worldData.lorebook) ? normalizeImportedLorebook(worldData.lorebook) : []
       const worldStore = useWorldStore()
       const world = await worldStore.createWorld(name, worldSetting, panelSchema, rawLorebook)
+
+      const dlcUpdates: {
+        dlcId?: string
+        sceneField?: string
+        bgm?: Record<string, string>
+        presetCharacters?: PresetCharacter[]
+      } = {}
+      if (typeof worldData.dlcId === 'string' && worldData.dlcId) dlcUpdates.dlcId = worldData.dlcId
+      if (typeof worldData.sceneField === 'string' && worldData.sceneField) dlcUpdates.sceneField = worldData.sceneField
+      if (worldData.bgm && typeof worldData.bgm === 'object' && !Array.isArray(worldData.bgm)) {
+        const bgm: Record<string, string> = {}
+        for (const [k, v] of Object.entries(worldData.bgm as Record<string, unknown>)) {
+          if (typeof k === 'string' && typeof v === 'string') bgm[k] = v
+        }
+        if (Object.keys(bgm).length > 0) dlcUpdates.bgm = bgm
+      }
+      if (Array.isArray(worldData.presetCharacters)) {
+        const pcs: PresetCharacter[] = []
+        for (const pc of worldData.presetCharacters as unknown[]) {
+          if (!pc || typeof pc !== 'object') continue
+          const r = pc as Record<string, unknown>
+          if (typeof r.label !== 'string' || typeof r.description !== 'string') continue
+          pcs.push({
+            label: r.label,
+            description: r.description,
+            ...(typeof r.hidden === 'string' ? { hidden: r.hidden } : {}),
+          })
+        }
+        if (pcs.length > 0) dlcUpdates.presetCharacters = pcs
+      }
+      if (Object.keys(dlcUpdates).length > 0) {
+        await worldStore.updateWorld(world.id, dlcUpdates)
+      }
 
       try {
         const rawPages = Array.isArray(data.pages) ? data.pages : []

@@ -153,7 +153,7 @@ export const useWorldStore = defineStore('world', {
     },
     async updateWorld(
     id: string,
-    updates: { name?: string; worldSetting?: string; panelSchema?: PanelField[]; lorebook?: LoreEntry[] },
+    updates: { name?: string; worldSetting?: string; panelSchema?: PanelField[]; lorebook?: LoreEntry[]; dlcId?: string; sceneField?: string; bgm?: Record<string, string>; presetCharacters?: PresetCharacter[] },
   ) {
     const w = this.worlds.find((x) => x.id === id)
     if (!w) return
@@ -163,6 +163,10 @@ export const useWorldStore = defineStore('world', {
       worldSetting: updates.worldSetting !== undefined ? updates.worldSetting : w.worldSetting,
       panelSchema: updates.panelSchema !== undefined ? updates.panelSchema : w.panelSchema,
       lorebook: updates.lorebook !== undefined ? updates.lorebook : w.lorebook,
+      dlcId: updates.dlcId !== undefined ? updates.dlcId : w.dlcId,
+      sceneField: updates.sceneField !== undefined ? updates.sceneField : w.sceneField,
+      bgm: updates.bgm !== undefined ? updates.bgm : w.bgm,
+      presetCharacters: updates.presetCharacters !== undefined ? updates.presetCharacters : w.presetCharacters,
       updatedAt: Date.now(),
     }
     await putWorld(updated)
@@ -170,6 +174,10 @@ export const useWorldStore = defineStore('world', {
     w.worldSetting = updated.worldSetting
     w.panelSchema = updated.panelSchema
     w.lorebook = updated.lorebook
+    w.dlcId = updated.dlcId
+    w.sceneField = updated.sceneField
+    w.bgm = updated.bgm
+    w.presetCharacters = updated.presetCharacters
     w.updatedAt = updated.updatedAt
     },
     // 基于世界的原始快照（旧世界无快照时用当前值）复制生成新世界，用于尝试多条冒险路线
