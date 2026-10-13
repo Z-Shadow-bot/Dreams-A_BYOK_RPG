@@ -54,7 +54,7 @@ function normalizeLorebook(raw: unknown): LoreEntry[] {
       ? e.tags.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t)
       : []
     const title = typeof e.title === 'string' && e.title.trim() ? e.title.trim() : undefined
-    result.push({ id: createId(), title, tags, content, required: !!e.required, fixed: e.fixed === true ? true : undefined, links: Array.isArray(e.links) ? e.links.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t) : undefined, hidden: e.hidden === true ? true : undefined })
+    result.push({ id: createId(), title, tags, content, required: !!e.required, fixed: e.fixed === true ? true : undefined, links: Array.isArray(e.links) ? e.links.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t) : undefined, hidden: e.hidden === true ? true : undefined, isLocation: e.isLocation === true ? true : undefined, isCharacter: e.isCharacter === true ? true : undefined })
   }
   return result
 }
@@ -129,17 +129,28 @@ export function parseDlcZip(zipBytes: Uint8Array): ParsedDlc {
   console.log(`[dlc] BGM映射表: ${JSON.stringify(rawBgm)}`)
   for (const [scene, filePath] of Object.entries(rawBgm)) {
     if (typeof filePath !== 'string' || !filePath.trim()) continue
-    const trimmedPath = filePath.trim()
-    let bytes = files[trimmedPath]
-    if (!bytes) bytes = files[`BGM/${trimmedPath}`]
-    if (!bytes) {
-      console.warn(`[dlc] BGM文件未找到: scene=${scene} path=${trimmedPath}`)
-      continue
+    const candidates = filePath
+      .split('|')
+      .map((p) => p.trim())
+      .filter(Boolean)
+    let found = 0
+    let joined = ''
+    for (const trimmedPath of candidates) {
+      let bytes = files[trimmedPath]
+      if (!bytes) bytes = files[`BGM/${trimmedPath}`]
+      if (!bytes) {
+        console.warn(`[dlc] BGM文件未找到: scene=${scene} path=${trimmedPath}`)
+        continue
+      }
+      const fn = basename(trimmedPath)
+      bgmBytes[fn] = bytes
+      joined = joined ? `${joined}|${fn}` : fn
+      found++
     }
-    const fn = basename(trimmedPath)
-    bgm[scene] = fn
-    bgmBytes[fn] = bytes
-    console.log(`[dlc] BGM匹配成功: scene=${scene} -> ${fn} (${bytes.length} bytes)`)
+    if (found > 0) {
+      bgm[scene] = joined
+      console.log(`[dlc] BGM匹配成功: scene=${scene} -> ${joined} (${found}个文件)`)
+    }
   }
   console.log(`[dlc] BGM总计: ${Object.keys(bgmBytes).length}个文件`)
 

@@ -190,6 +190,7 @@ async function startBgm(dlcId: string, basename: string): Promise<void> {
 }
 
 // 根据当前场景类型播放对应 BGM（循环）
+// 支持映射值用 "|" 分隔多个候选文件（如 "街区与家.mp3|终须归.mp3"），每次进入该场景时随机选一个
 export async function playSceneBgm(world: World | null, scene: string | undefined): Promise<void> {
   console.log(`[bgm] playSceneBgm: dlcId=${world?.dlcId ?? '无'} scene=${scene ?? '无'} currentKey=${currentKey} loadingKey=${loadingKey}`)
   if (!world || !world.dlcId || !world.bgm || !scene) {
@@ -197,13 +198,15 @@ export async function playSceneBgm(world: World | null, scene: string | undefine
     await stopBgm()
     return
   }
-  const basename = world.bgm[scene]
-  if (!basename) {
+  const raw = world.bgm[scene]
+  if (!raw) {
     console.log(`[bgm] playSceneBgm: scene "${scene}" 无对应BGM，调stopBgm`)
     console.log(`[bgm] playSceneBgm: bgm映射表keys=${JSON.stringify(Object.keys(world.bgm))}`)
     await stopBgm()
     return
   }
+  const candidates = raw.split('|').map((s) => s.trim()).filter(Boolean)
+  const basename = candidates.length > 1 ? candidates[Math.floor(Math.random() * candidates.length)] : candidates[0] ?? raw
   const cacheKey = `${world.dlcId}/${basename}`
   if (currentKey === cacheKey) { console.log('[bgm] playSceneBgm: 已在播放同一曲目，跳过'); return }
   if (loadingKey === cacheKey) { console.log('[bgm] playSceneBgm: 正在加载同一曲目，跳过'); return }

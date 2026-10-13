@@ -623,7 +623,13 @@ export const useAdventureStore = defineStore('adventure', {
         presetCharacters?: PresetCharacter[]
       } = {}
       if (typeof worldData.dlcId === 'string' && worldData.dlcId) dlcUpdates.dlcId = worldData.dlcId
-      if (typeof worldData.sceneField === 'string' && worldData.sceneField) dlcUpdates.sceneField = worldData.sceneField
+      if (
+        typeof worldData.sceneField === 'string' &&
+        worldData.sceneField &&
+        panelSchema.some((f) => f.key === worldData.sceneField)
+      ) {
+        dlcUpdates.sceneField = worldData.sceneField
+      }
       if (worldData.bgm && typeof worldData.bgm === 'object' && !Array.isArray(worldData.bgm)) {
         const bgm: Record<string, string> = {}
         for (const [k, v] of Object.entries(worldData.bgm as Record<string, unknown>)) {
