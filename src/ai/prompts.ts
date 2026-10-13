@@ -383,11 +383,14 @@ export function buildCharacterGenPrompt(
   lines.push('- 若玩家描述过于单薄（缺少姓名、外形、出身、性格、动机等关键信息），第一轮不要直接展开剧情：在 narration 中友善地列出 2-4 项需要补充的信息（如"你还想给角色起个什么名字？""说说看，你为什么踏上这趟旅程？"），options 给出补充方向建议，同时生成初步存档（缺失处用中性默认值，characterProfile 记录已提供部分并标注待补充项）。玩家在下一轮输入补充后，再正式拉开序幕。')
   const constraint = lines.join('\n')
   const lorePart = buildLoreInjection(world, userInput)
+  const fallbackPart = world.characterFallback && world.characterFallback.trim()
+    ? `\n\n【角色来源兜底（仅本次创建角色时适用，不写入后续剧情）】\n${world.characterFallback.trim()}`
+    : ''
   const hiddenPart = hiddenPreset && hiddenPreset.trim()
     ? `\n\n【隐藏设定（玩家不可见，仅你知晓）】\n${hiddenPreset.trim()}\n请严格依据此隐藏设定生成初始存档（如填入对应面板字段、技能、物品等），但在 narration 中不得直接暴露或提及这段设定的存在，让玩家在后续剧情中自然发现。`
     : ''
   return `【世界设定】
-${world.worldSetting}
+${world.worldSetting}${fallbackPart}
 ${lorePart}
 
 【角色面板字段】

@@ -574,6 +574,7 @@ export const useAdventureStore = defineStore('adventure', {
           ...(world.sceneField ? { sceneField: world.sceneField } : {}),
           ...(world.bgm ? { bgm: clone(world.bgm) } : {}),
           ...(world.presetCharacters ? { presetCharacters: clone(world.presetCharacters) } : {}),
+          ...(world.characterFallback ? { characterFallback: world.characterFallback } : {}),
         },
         currentSave: this.currentSave,
         currentIndex: this.currentIndex,
@@ -621,6 +622,7 @@ export const useAdventureStore = defineStore('adventure', {
         sceneField?: string
         bgm?: Record<string, string>
         presetCharacters?: PresetCharacter[]
+        characterFallback?: string
       } = {}
       if (typeof worldData.dlcId === 'string' && worldData.dlcId) dlcUpdates.dlcId = worldData.dlcId
       if (
@@ -650,6 +652,9 @@ export const useAdventureStore = defineStore('adventure', {
           })
         }
         if (pcs.length > 0) dlcUpdates.presetCharacters = pcs
+      }
+      if (typeof worldData.characterFallback === 'string' && worldData.characterFallback.trim()) {
+        dlcUpdates.characterFallback = worldData.characterFallback.trim()
       }
       if (Object.keys(dlcUpdates).length > 0) {
         await worldStore.updateWorld(world.id, dlcUpdates)

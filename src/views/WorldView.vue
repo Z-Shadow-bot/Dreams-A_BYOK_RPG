@@ -337,6 +337,7 @@ async function doImportDlc() {
           bgm: parsed.bgm,
           sceneField: parsed.manifest.sceneField,
           presetCharacters: m.presetCharacters,
+          characterFallback: parsed.manifest.characterFallback,
         })
         await adventure.open(existing.id)
         await adventure.renormalize()
@@ -351,6 +352,7 @@ async function doImportDlc() {
         bgm: parsed.bgm,
         lorebook: m.world.lorebook,
         presetCharacters: m.presetCharacters,
+        characterFallback: parsed.manifest.characterFallback,
       })
       await adventure.open(world.id)
     } catch (e) {

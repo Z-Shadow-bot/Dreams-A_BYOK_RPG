@@ -123,6 +123,12 @@ export function parseDlcZip(zipBytes: Uint8Array): ParsedDlc {
     : undefined
   manifest.presetCharacters = presetCharacters?.length ? presetCharacters : undefined
 
+  if (typeof manifest.characterFallback === 'string' && manifest.characterFallback.trim()) {
+    manifest.characterFallback = manifest.characterFallback.trim()
+  } else {
+    delete manifest.characterFallback
+  }
+
   const bgm: Record<string, string> = {}
   const bgmBytes: Record<string, Uint8Array> = {}
   const rawBgm = manifest.bgm && typeof manifest.bgm === 'object' ? manifest.bgm : {}

@@ -91,6 +91,7 @@ export const useWorldStore = defineStore('world', {
         bgm: Record<string, string>
         lorebook?: LoreEntry[]
         presetCharacters?: PresetCharacter[]
+        characterFallback?: string
       },
     ): Promise<World> {
       const now = Date.now()
@@ -111,6 +112,7 @@ export const useWorldStore = defineStore('world', {
         sceneField: dlc.sceneField,
         bgm: dlc.bgm,
         presetCharacters: dlc.presetCharacters,
+        characterFallback: dlc.characterFallback,
       }
       await putWorld(world)
       this.worlds.unshift(world)
@@ -153,7 +155,7 @@ export const useWorldStore = defineStore('world', {
     },
     async updateWorld(
     id: string,
-    updates: { name?: string; worldSetting?: string; panelSchema?: PanelField[]; lorebook?: LoreEntry[]; dlcId?: string; sceneField?: string; bgm?: Record<string, string>; presetCharacters?: PresetCharacter[] },
+    updates: { name?: string; worldSetting?: string; panelSchema?: PanelField[]; lorebook?: LoreEntry[]; dlcId?: string; sceneField?: string; bgm?: Record<string, string>; presetCharacters?: PresetCharacter[]; characterFallback?: string },
   ) {
     const w = this.worlds.find((x) => x.id === id)
     if (!w) return
@@ -167,6 +169,7 @@ export const useWorldStore = defineStore('world', {
       sceneField: updates.sceneField !== undefined ? updates.sceneField : w.sceneField,
       bgm: updates.bgm !== undefined ? updates.bgm : w.bgm,
       presetCharacters: updates.presetCharacters !== undefined ? updates.presetCharacters : w.presetCharacters,
+      characterFallback: updates.characterFallback !== undefined ? updates.characterFallback : w.characterFallback,
       updatedAt: Date.now(),
     }
     await putWorld(updated)
@@ -178,6 +181,7 @@ export const useWorldStore = defineStore('world', {
     w.sceneField = updated.sceneField
     w.bgm = updated.bgm
     w.presetCharacters = updated.presetCharacters
+    w.characterFallback = updated.characterFallback
     w.updatedAt = updated.updatedAt
     },
     // 基于世界的原始快照（旧世界无快照时用当前值）复制生成新世界，用于尝试多条冒险路线
@@ -213,6 +217,7 @@ export const useWorldStore = defineStore('world', {
         presetCharacters: src.presetCharacters
           ? JSON.parse(JSON.stringify(src.presetCharacters)) as PresetCharacter[]
           : undefined,
+        characterFallback: src.characterFallback,
       }
       await putWorld(world)
       this.worlds.unshift(world)
@@ -229,6 +234,7 @@ export const useWorldStore = defineStore('world', {
         bgm?: Record<string, string>
         sceneField?: string
         presetCharacters?: PresetCharacter[]
+        characterFallback?: string
       },
     ) {
       const w = this.worlds.find((x) => x.id === id)
@@ -241,6 +247,7 @@ export const useWorldStore = defineStore('world', {
         bgm: meta.bgm !== undefined ? meta.bgm : w.bgm,
         sceneField: meta.sceneField !== undefined ? meta.sceneField : w.sceneField,
         presetCharacters: meta.presetCharacters !== undefined ? meta.presetCharacters : w.presetCharacters,
+        characterFallback: meta.characterFallback !== undefined ? meta.characterFallback : w.characterFallback,
         updatedAt: Date.now(),
       }
       await putWorld(updated)
@@ -250,6 +257,7 @@ export const useWorldStore = defineStore('world', {
       w.bgm = updated.bgm
       w.sceneField = updated.sceneField
       w.presetCharacters = updated.presetCharacters
+      w.characterFallback = updated.characterFallback
       w.updatedAt = updated.updatedAt
     },
     exportWorld(id: string): unknown | null {
