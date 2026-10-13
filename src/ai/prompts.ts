@@ -1,16 +1,40 @@
 import type { World, SaveData, PanelField, LoreEntry, StoryPage } from '@/types'
-import type { Difficulty } from '@/stores/settings'
+import type { Difficulty, NarrativeSpeed, EventFrequency } from '@/stores/settings'
 
 // 每轮注入世界书条目的预算上限（字符）
 const LORE_BUDGET = 4000
 
 // ===== 冒险设置规则（高优先级指令，生成"行动"时随本轮注入） =====
 export interface AdventureRules {
-  reduceEvents: boolean
+  eventFrequency: EventFrequency
   difficulty: Difficulty
 }
 
-const REDUCE_EVENTS_RULE = '【减少突发事件（已开启，高优先级指令，务必遵守）】请避免安排会打断玩家正在推进的计划或【状态-概述】中"进行中的事项"的突发事件（例如赶路途中冒出的拦路劫匪、陌生人的临时求助、无关紧要的随机遭遇等）。让剧情平稳延续玩家当前行动与目标；如确有必要插入变化，用一两句话快速带过即可，不得喧宾夺主、不得偏离玩家意图。'
+function eventFrequencyRule(f: EventFrequency): string {
+  switch (f) {
+    case 'none':
+      return '【突发事件频率·无（高优先级指令，务必遵守）】不安排任何打断玩家推进阶段性目标的突发事件。剧情平稳延续玩家当前行动与目标，让玩家充分掌控节奏。如确有必要插入环境变化或偶遇，用一两句话快速带过，不得喧宾夺主、不得偏离玩家意图。'
+    case 'frequent':
+      return '【突发事件频率·频繁（高优先级指令，务必遵守）】在剧情逻辑允许突发事件发生的地方，都有概率安排突发事件（如遭遇战、意外发现、突发状况等）。出现概率由剧情逻辑决定：逻辑上越合理的地方概率越高。突发事件应与当前场景和世界设定相符，为冒险增加变数与挑战。'
+    case 'doom':
+      return '【突发事件频率·厄运（高优先级指令，务必遵守）】几乎所有逻辑上可能出现突发事件的地方，都会发生突发事件。突发事件密集出现，且倾向于不利方向：遭遇强敌、装备故障、计划被干扰、坏消息接踵而至。玩家将面临接连不断的考验与危机，需要谨慎应对、善用资源才能化险为夷。'
+    default:
+      return ''
+  }
+}
+
+function narrativeSpeedRule(speed: NarrativeSpeed): string {
+  switch (speed) {
+    case 'fine':
+      return '【叙事推进速度·精细（优先级高，务必执行）】\n- 每轮只推进一个叙事节拍：聚焦当前行动的直接后果与即时反馈，细致描写环境、感官与互动细节。\n- 节奏舒缓，充分展开当下场景的所见所闻所感，不跳过过程。\n- 适合沉浸式体验，让玩家充分感受每个瞬间的氛围与角色状态变化。'
+    case 'fast':
+      return '【叙事推进速度·快速（优先级高，务必执行）】\n- 每轮推进一个剧情节点：省略与环境营造、路人寒暄、旅途跋涉、重复场景相关的无关细节，直接推进到下一个有意义的剧情转折。\n- 角色按照自身设定和当前目标主动行动，过程性环节用一两句话概括带过。\n- 节奏紧凑，聚焦主线进展；但每轮仍须完整更新存档与世界书。\n- 若遇到重大选择或影响剧情整体走向的分歧点，暂停推进，呈现情境让玩家亲自抉择。'
+    case 'rapid':
+      return '【叙事推进速度·极速（优先级高，务必执行）】\n- 每轮推进至下一个阶段性目标：大幅跳过过程性段落，直接推进到下一个阶段性里程碑（如抵达目的地、完成当前任务、达成小目标等）。\n- 角色按照自身设定和当前目标自主行动，途中遭遇用简短概括处理，只展开对目标有实质影响的场景。\n- 节奏极快，narration 聚焦阶段性成果与关键变化；每轮仍须完整更新存档与世界书。\n- 若遇到重大选择、重大突发事件或影响剧情整体走向的分歧点，暂停推进，呈现情境让玩家亲自抉择。'
+    default:
+      return ''
+  }
+}
 
 function difficultyRule(d: Difficulty): string {
   switch (d) {
@@ -27,7 +51,8 @@ function difficultyRule(d: Difficulty): string {
 
 export function buildAdventureRulesPart(rules?: AdventureRules): string {
   const parts: string[] = []
-  if (rules?.reduceEvents) parts.push(`- ${REDUCE_EVENTS_RULE}`)
+  const er = eventFrequencyRule(rules?.eventFrequency ?? 'normal')
+  if (er) parts.push(`- ${er}`)
   const dr = difficultyRule(rules?.difficulty ?? 'normal')
   if (dr) parts.push(`- ${dr}`)
   if (parts.length === 0) return ''
@@ -454,7 +479,7 @@ export function buildActionPrompt(
   currentSave: SaveData,
   userInput: string,
   lastNarration?: string,
-  fastForward?: boolean,
+  narrativeSpeed?: NarrativeSpeed,
   rules?: AdventureRules,
 ): string {
   const lastPart = lastNarration ? `【上一轮剧情供衔接参考】\n${lastNarration}\n\n` : ''
@@ -480,15 +505,8 @@ export function buildActionPrompt(
     world.sceneField ? String(currentSave.panel[world.sceneField] ?? '') : undefined,
     activeNames,
   )
-  const fastPart = fastForward
-    ? `
-
-【快速推进叙事（已开启，优先级高，务必执行）】
-- 玩家选择快速推进模式：省略与环境营造、路人寒暄、旅途跋涉、重复场景相关的无关细节。
-- 直接推进主线关键节点、重大转折与影响剧情走向的事件；节奏紧凑，避免拖沓。
-- 每轮仍须完整更新存档与世界书（save / loreUpdates 不可省略），但 narration 聚焦主线进展。
-- 若当轮确实没有值得推进的主线内容，可用两三句话带过过程，把重点留给下轮更重要的节点。`
-    : ''
+  const speedPart = narrativeSpeedRule(narrativeSpeed ?? 'normal')
+  const speedText = speedPart ? `\n\n${speedPart}` : ''
   const rulesPart = buildAdventureRulesPart(rules)
   return `${lorePart}
 
@@ -499,7 +517,7 @@ ${stringifyCompact(currentSave)}
 若当前存档表明角色尚未正式开场（characterProfile 极简或标注待补充、name/race 等关键字段为空或默认值、overview.impression 显示待补充等），本轮「玩家行动」应理解为「对角色设定的补充」而非正式行动：据此完善 characterProfile 与面板字段，然后生成正式的开场叙事并拉开序幕；若信息仍不足，继续友善追问需要补充的内容，不强行开始剧情。
 
 【玩家行动】
-${userInput}${fastPart}${rulesPart}`
+${userInput}${speedText}${rulesPart}`
 }
 
 // 系统消息（行动场景用到）
@@ -570,11 +588,11 @@ export function buildActionRecoveryDiffPrompt(
   currentSave: SaveData,
   userInput: string,
   lastNarration: string | undefined,
-  fastForward: boolean | undefined,
+  narrativeSpeed: NarrativeSpeed | undefined,
   rules?: AdventureRules,
 ): string {
-  const fastPart = fastForward
-    ? `\n- 快速推进叙事已开启：省略环境与寒暄细节，直接推进主线关键节点。`
+  const speedPart = narrativeSpeed === 'fast' || narrativeSpeed === 'rapid'
+    ? `\n- 叙事推进速度${narrativeSpeed === 'rapid' ? '·极速' : '·快速'}：省略过程细节，直接推进主线关键节点。`
     : ''
   const rulesPart = buildAdventureRulesPart(rules)
   return `上一次生成本轮行动的输出因过长被截断。现在用更精简的方式重新生成本轮结果，输出且只输出一个 JSON 对象：
@@ -594,7 +612,7 @@ patchSave 格式说明（关键：这是修改指令，不是完整存档！）�
 
 ${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true)}
 
-${RECOVERY_JSON_RULE}${fastPart}${rulesPart}`
+${RECOVERY_JSON_RULE}${speedPart}${rulesPart}`
 }
 
 // split 模式第 1 次：只生成叙事与选项
@@ -603,11 +621,11 @@ export function buildActionRecoverySplitNarrationPrompt(
   currentSave: SaveData,
   userInput: string,
   lastNarration: string | undefined,
-  fastForward: boolean | undefined,
+  narrativeSpeed: NarrativeSpeed | undefined,
   rules?: AdventureRules,
 ): string {
-  const fastPart = fastForward
-    ? `\n- 快速推进叙事已开启：省略环境与寒暄细节，直接推进主线关键节点。`
+  const speedPart = narrativeSpeed === 'fast' || narrativeSpeed === 'rapid'
+    ? `\n- 叙事推进速度${narrativeSpeed === 'rapid' ? '·极速' : '·快速'}：省略过程细节，直接推进主线关键节点。`
     : ''
   const rulesPart = buildAdventureRulesPart(rules)
   return `上一轮输出因过长被截断，本轮拆成两次独立生成。这是第 1 次，你只输出一个 JSON 对象：
@@ -619,7 +637,7 @@ export function buildActionRecoverySplitNarrationPrompt(
 
 ${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true)}
 
-${RECOVERY_JSON_RULE}${fastPart}${rulesPart}`
+${RECOVERY_JSON_RULE}${speedPart}${rulesPart}`
 }
 
 // split 模式第 2 次：基于第 1 次生成的叙事，只输出完整存档与世界书更新

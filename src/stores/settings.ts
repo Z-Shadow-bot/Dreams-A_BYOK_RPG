@@ -16,11 +16,11 @@ const DEV_MODE_KEY = 'dev_mode'
 const BGM_MUTED_KEY = 'bgm_muted'
 const BAG_DETAIL_KEY = 'bag_detail'
 const TRUNCATE_STRATEGY_KEY = 'truncate_strategy'
-const FAST_FORWARD_KEY = 'fast_forward'
+const NARRATIVE_SPEED_KEY = 'narrative_speed'
 const AUTO_SAVE_KEY = 'auto_save'
 const AUTO_SAVE_INTERVAL_KEY = 'auto_save_interval'
 const MANUAL_PROFILE_KEY = 'manual_profile'
-const REDUCE_EVENTS_KEY = 'reduce_events'
+const EVENT_FREQUENCY_KEY = 'event_frequency'
 const DIFFICULTY_KEY = 'difficulty'
 const ALLOW_REWRITE_KEY = 'allow_rewrite'
 const OPTION_FALLBACK_KEY = 'option_fallback'
@@ -39,6 +39,10 @@ export type TruncateStrategy = 'diff' | 'split'
 
 export type Difficulty = 'easy' | 'normal' | 'hard' | 'nightmare'
 
+export type NarrativeSpeed = 'fine' | 'normal' | 'fast' | 'rapid'
+
+export type EventFrequency = 'none' | 'normal' | 'frequent' | 'doom'
+
 export type OptionFallback = 'generic' | 'regenerate'
 
 export const useSettingsStore = defineStore('settings', {
@@ -51,11 +55,11 @@ export const useSettingsStore = defineStore('settings', {
     muted: false,
     detailedBag: false, // 精细化背包描述：对物品生成更精细的 state 描述
     truncateStrategy: 'diff' as TruncateStrategy, // 输出截断自动重试策略：diff 精简修改指令 / split 拆分输出
-    fastForward: false, // 快速推进叙事：省略无关细节，直接推进主线
+    narrativeSpeed: 'normal' as NarrativeSpeed, // 叙事推进速度：精细/正常/快速/极速，控制每轮叙事推进的幅度
     autoSave: true, // 自动存档
     autoSaveInterval: 10, // 自动存档周期（每 N 页存档一次）
     manualProfile: false, // 手动更新设定：开启后 AI 不得修改玩家角色人设
-    reduceEvents: false, // 减少突发事件：提示 AI 少安排打断玩家推进剧情的突发事件
+    eventFrequency: 'normal' as EventFrequency, // 突发事件频率：无/正常/频繁/厄运，控制突发事件出现概率
     difficulty: 'normal' as Difficulty, // 游戏难度：简单/正常/困难/噩梦，影响行动成功率与敌人强度
     allowRewrite: false, // 允许改写：开启后双击最新页面可编辑，行动前 AI 先同步改写内容
     optionFallback: 'generic' as OptionFallback, // AI 未正常生成选项时的兜底：generic 通用兜底选项 / regenerate 追加补全请求
@@ -105,10 +109,11 @@ export const useSettingsStore = defineStore('settings', {
         this.truncateStrategy = 'diff'
       }
       try {
-        const f = await getSetting<boolean>(FAST_FORWARD_KEY)
-        this.fastForward = !!f
+        const ns = await getSetting<string>(NARRATIVE_SPEED_KEY)
+        this.narrativeSpeed =
+          ns === 'fine' || ns === 'fast' || ns === 'rapid' ? ns : 'normal'
       } catch {
-        this.fastForward = false
+        this.narrativeSpeed = 'normal'
       }
       try {
         const a = await getSetting<boolean>(AUTO_SAVE_KEY)
@@ -129,10 +134,11 @@ export const useSettingsStore = defineStore('settings', {
         this.manualProfile = false
       }
       try {
-        const r = await getSetting<boolean>(REDUCE_EVENTS_KEY)
-        this.reduceEvents = !!r
+        const ef = await getSetting<string>(EVENT_FREQUENCY_KEY)
+        this.eventFrequency =
+          ef === 'none' || ef === 'frequent' || ef === 'doom' ? ef : 'normal'
       } catch {
-        this.reduceEvents = false
+        this.eventFrequency = 'normal'
       }
       try {
         const d = await getSetting<string>(DIFFICULTY_KEY)
@@ -240,12 +246,12 @@ export const useSettingsStore = defineStore('settings', {
         // 保存失败不阻塞设置生效
       }
     },
-    async setFastForward(v: boolean) {
-      this.fastForward = v
+    async setNarrativeSpeed(v: NarrativeSpeed) {
+      this.narrativeSpeed = v
       try {
-        await putSetting(FAST_FORWARD_KEY, v)
+        await putSetting(NARRATIVE_SPEED_KEY, v)
       } catch {
-        // 保存失败不阻塞开关生效
+        // 保存失败不阻塞设置生效
       }
     },
     async setAutoSave(v: boolean) {
@@ -273,12 +279,12 @@ export const useSettingsStore = defineStore('settings', {
         // 保存失败不阻塞开关生效
       }
     },
-    async setReduceEvents(v: boolean) {
-      this.reduceEvents = v
+    async setEventFrequency(v: EventFrequency) {
+      this.eventFrequency = v
       try {
-        await putSetting(REDUCE_EVENTS_KEY, v)
+        await putSetting(EVENT_FREQUENCY_KEY, v)
       } catch {
-        // 保存失败不阻塞开关生效
+        // 保存失败不阻塞设置生效
       }
     },
     async setDifficulty(v: Difficulty) {

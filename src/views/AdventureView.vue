@@ -18,10 +18,6 @@ const input = computed({
 })
 const enhanceSummarize = ref(true) // 总结优化已有设定
 const enhanceExpand = ref(true) // 补充更多合理设定
-const fastEnabled = ref(settings.fastForward) // 快速推进叙事
-function onFastChange() {
-  void settings.setFastForward(fastEnabled.value)
-}
 
 const adventureSettingsOpen = ref(false) // 冒险设置折叠栏
 const difficultyOrder = ['easy', 'normal', 'hard', 'nightmare'] as const
@@ -34,6 +30,29 @@ function onDifficultyInput(e: Event) {
   const i = Number((e.target as HTMLInputElement).value)
   void settings.setDifficulty(difficultyOrder[i] ?? 'normal')
 }
+
+const narrativeSpeedOrder = ['fine', 'normal', 'fast', 'rapid'] as const
+const narrativeSpeedLabels = ['精细', '正常', '快速', '极速']
+const narrativeSpeedIndex = computed(() => {
+  const i = narrativeSpeedOrder.indexOf(settings.narrativeSpeed)
+  return i >= 0 ? i : 1
+})
+function onNarrativeSpeedInput(e: Event) {
+  const i = Number((e.target as HTMLInputElement).value)
+  void settings.setNarrativeSpeed(narrativeSpeedOrder[i] ?? 'normal')
+}
+
+const eventFreqOrder = ['none', 'normal', 'frequent', 'doom'] as const
+const eventFreqLabels = ['无', '正常', '频繁', '厄运']
+const eventFreqIndex = computed(() => {
+  const i = eventFreqOrder.indexOf(settings.eventFrequency)
+  return i >= 0 ? i : 1
+})
+function onEventFreqInput(e: Event) {
+  const i = Number((e.target as HTMLInputElement).value)
+  void settings.setEventFrequency(eventFreqOrder[i] ?? 'normal')
+}
+
 
 // 允许改写：双击最新页内容可编辑，行动前 AI 先同步改写内容
 const editingPage = ref(false)
@@ -302,18 +321,32 @@ async function rollback() {
             <span class="settings-arrow">{{ adventureSettingsOpen ? '▾' : '▸' }}</span>
           </button>
           <template v-if="adventureSettingsOpen">
-            <label class="setting-row">
-              <span class="setting-label">快速推进叙事</span>
-              <input type="checkbox" v-model="fastEnabled" @change="onFastChange" />
-            </label>
-            <label class="setting-row">
-              <span class="setting-label">减少突发事件</span>
+            <div class="setting-row">
+              <span class="setting-label">叙事推进速度</span>
               <input
-                type="checkbox"
-                :checked="settings.reduceEvents"
-                @change="settings.setReduceEvents(($event.target as HTMLInputElement).checked)"
+                type="range"
+                class="difficulty-range"
+                min="0"
+                max="3"
+                step="1"
+                :value="narrativeSpeedIndex"
+                @input="onNarrativeSpeedInput"
               />
-            </label>
+              <span class="difficulty-value">{{ narrativeSpeedLabels[narrativeSpeedIndex] }}</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">突发事件频率</span>
+              <input
+                type="range"
+                class="difficulty-range"
+                min="0"
+                max="3"
+                step="1"
+                :value="eventFreqIndex"
+                @input="onEventFreqInput"
+              />
+              <span class="difficulty-value">{{ eventFreqLabels[eventFreqIndex] }}</span>
+            </div>
             <div class="setting-row">
               <span class="setting-label">游戏难度</span>
               <input

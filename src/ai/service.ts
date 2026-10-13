@@ -13,6 +13,7 @@ import {
   type AdventureRules,
 } from './prompts'
 import { useSettingsStore } from '@/stores/settings'
+import type { NarrativeSpeed } from '@/stores/settings'
 import type {
   APIConfig,
   AIResponse,
@@ -321,20 +322,20 @@ export async function generateAction(
   lastNarration: string | undefined,
   config: APIConfig,
   detailedBag: boolean = false,
-  fastForward: boolean = false,
+  narrativeSpeed: NarrativeSpeed = 'normal',
   onRecoverStart?: () => void,
 ): Promise<AIResponse> {
   const { min, max } = narrationRange(config)
   const system = buildActionSystemPrompt(min, max, world, detailedBag)
   const st = useSettingsStore()
-  const rules: AdventureRules = { reduceEvents: st.reduceEvents, difficulty: st.difficulty }
+  const rules: AdventureRules = { eventFrequency: st.eventFrequency, difficulty: st.difficulty }
   try {
     const content = await chat(
       [
         { role: 'system', content: system },
         {
           role: 'user',
-          content: buildActionPrompt(world, currentSave, userInput, lastNarration, fastForward, rules),
+          content: buildActionPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules),
         },
       ],
       config,
@@ -350,7 +351,7 @@ export async function generateAction(
     if (e instanceof AIError && e.truncated) {
       // 输出被截断：按用户设置的策略自动降级重试，避免再次截断
       onRecoverStart?.()
-      return recoverAction(world, currentSave, userInput, lastNarration, config, detailedBag, fastForward)
+      return recoverAction(world, currentSave, userInput, lastNarration, config, detailedBag, narrativeSpeed)
     }
     throw e
   }
@@ -445,12 +446,12 @@ async function recoverAction(
   lastNarration: string | undefined,
   config: APIConfig,
   detailedBag: boolean,
-  fastForward: boolean,
+  narrativeSpeed: NarrativeSpeed,
 ): Promise<AIResponse> {
   const { min, max } = narrationRange(config)
   const system = buildActionSystemPrompt(min, max, world, detailedBag)
   const st = useSettingsStore()
-  const rules: AdventureRules = { reduceEvents: st.reduceEvents, difficulty: st.difficulty }
+  const rules: AdventureRules = { eventFrequency: st.eventFrequency, difficulty: st.difficulty }
   const strategy = st.truncateStrategy
   if (strategy === 'diff') {
     const content = await chat(
@@ -458,7 +459,7 @@ async function recoverAction(
         { role: 'system', content: system },
         {
           role: 'user',
-          content: buildActionRecoveryDiffPrompt(world, currentSave, userInput, lastNarration, fastForward, rules),
+          content: buildActionRecoveryDiffPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules),
         },
       ],
       config,
@@ -478,7 +479,7 @@ async function recoverAction(
       { role: 'system', content: system },
       {
         role: 'user',
-        content: buildActionRecoverySplitNarrationPrompt(world, currentSave, userInput, lastNarration, fastForward, rules),
+        content: buildActionRecoverySplitNarrationPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules),
       },
     ],
     config,

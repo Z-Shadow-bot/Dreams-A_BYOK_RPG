@@ -325,7 +325,7 @@ export const useAdventureStore = defineStore('adventure', {
           lastNarration,
           config,
           s.detailedBag,
-          s.fastForward,
+          s.narrativeSpeed,
           () => {
             this.recoveryNote = '文本较长，正在优化生成方式，请稍候…'
           },
