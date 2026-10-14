@@ -40,10 +40,10 @@ async function secureRemove(key: string): Promise<void> {
 
 export async function saveApiKey(key: string): Promise<void> {
   if (Capacitor.isNativePlatform()) {
-    const ok = await secureSet(API_KEY, key)
-    if (!ok) {
-      localStorage.setItem(FALLBACK_KEY, key)
-    }
+    await secureSet(API_KEY, key)
+    // 无论 secure 写入是否成功，都镜像一份最新 Key 到 localStorage 兜底：
+    // 防止 secure 读取偶发失败回退时读到陈旧 Key（陈旧的 Key 与当前 baseUrl 不配对会导致鉴权错误）
+    localStorage.setItem(FALLBACK_KEY, key)
     return
   }
   localStorage.setItem(FALLBACK_KEY, key)
@@ -68,10 +68,9 @@ const PROFILE_FALLBACK_PREFIX = 'dreams_api_profile_key_'
 
 export async function saveProfileKey(profileId: string, key: string): Promise<void> {
   if (Capacitor.isNativePlatform()) {
-    const ok = await secureSet(`${PROFILE_KEY_PREFIX}:${profileId}`, key)
-    if (!ok) {
-      localStorage.setItem(`${PROFILE_FALLBACK_PREFIX}${profileId}`, key)
-    }
+    await secureSet(`${PROFILE_KEY_PREFIX}:${profileId}`, key)
+    // 镜像同步最新 Key 到 localStorage 兜底，避免读取失败回退时读到陈旧 Key
+    localStorage.setItem(`${PROFILE_FALLBACK_PREFIX}${profileId}`, key)
     return
   }
   localStorage.setItem(`${PROFILE_FALLBACK_PREFIX}${profileId}`, key)
