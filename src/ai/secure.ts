@@ -9,10 +9,16 @@ async function secureSet(key: string, value: string): Promise<boolean> {
     await SecureStoragePlugin.set({ key, value })
     // 写后读验证，避免原生层静默失败
     const res = await SecureStoragePlugin.get({ key })
-    return res.value === value
+    if (res.value === value) return true
   } catch {
-    return false
+    // 写失败或验证失败：删除旧 secure 值，避免残留旧 Key 被后续读取误用
   }
+  try {
+    await SecureStoragePlugin.remove({ key })
+  } catch {
+    // 忽略删除失败
+  }
+  return false
 }
 
 async function secureGet(key: string): Promise<string | null> {

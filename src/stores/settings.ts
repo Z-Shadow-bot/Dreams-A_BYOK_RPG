@@ -212,6 +212,9 @@ export const useSettingsStore = defineStore('settings', {
       const key = await getProfileKey(id)
       if (key) {
         await this.setApiKey(key)
+      } else {
+        // 该 profile 未保存过 API Key：清空当前 Key，避免残留上一个 profile 的 Key 请求本配置导致鉴权错误
+        await this.clearApiKey()
       }
     },
     async setDevMode(v: boolean) {
