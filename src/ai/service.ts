@@ -328,7 +328,7 @@ export async function generateAction(
   const { min, max } = narrationRange(config)
   const system = buildActionSystemPrompt(min, max, world, detailedBag)
   const st = useSettingsStore()
-  const rules: AdventureRules = { eventFrequency: st.eventFrequency, difficulty: st.difficulty }
+  const rules: AdventureRules = { eventFrequency: st.eventFrequency, difficulty: st.difficulty, narrativeDetail: st.narrativeDetail }
   try {
     const content = await chat(
       [
@@ -451,7 +451,7 @@ async function recoverAction(
   const { min, max } = narrationRange(config)
   const system = buildActionSystemPrompt(min, max, world, detailedBag)
   const st = useSettingsStore()
-  const rules: AdventureRules = { eventFrequency: st.eventFrequency, difficulty: st.difficulty }
+  const rules: AdventureRules = { eventFrequency: st.eventFrequency, difficulty: st.difficulty, narrativeDetail: st.narrativeDetail }
   const strategy = st.truncateStrategy
   if (strategy === 'diff') {
     const content = await chat(

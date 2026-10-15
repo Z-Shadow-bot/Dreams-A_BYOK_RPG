@@ -17,6 +17,7 @@ const BGM_MUTED_KEY = 'bgm_muted'
 const BAG_DETAIL_KEY = 'bag_detail'
 const TRUNCATE_STRATEGY_KEY = 'truncate_strategy'
 const NARRATIVE_SPEED_KEY = 'narrative_speed'
+const NARRATIVE_DETAIL_KEY = 'narrative_detail'
 const AUTO_SAVE_KEY = 'auto_save'
 const AUTO_SAVE_INTERVAL_KEY = 'auto_save_interval'
 const MANUAL_PROFILE_KEY = 'manual_profile'
@@ -41,6 +42,8 @@ export type Difficulty = 'easy' | 'normal' | 'hard' | 'nightmare'
 
 export type NarrativeSpeed = 'fine' | 'normal' | 'fast' | 'rapid'
 
+export type NarrativeDetail = 'brief' | 'normal' | 'detailed' | 'extreme'
+
 export type EventFrequency = 'none' | 'normal' | 'frequent' | 'doom'
 
 export type OptionFallback = 'generic' | 'regenerate'
@@ -56,6 +59,7 @@ export const useSettingsStore = defineStore('settings', {
     detailedBag: false, // 精细化背包描述：对物品生成更精细的 state 描述
     truncateStrategy: 'diff' as TruncateStrategy, // 输出截断自动重试策略：diff 精简修改指令 / split 拆分输出
     narrativeSpeed: 'normal' as NarrativeSpeed, // 叙事推进速度：精细/正常/快速/极速，控制每轮叙事推进的幅度
+    narrativeDetail: 'normal' as NarrativeDetail, // 描写细致程度：简洁/常规/精细/极致，仅影响叙事描写，不影响存档与世界书
     autoSave: true, // 自动存档
     autoSaveInterval: 10, // 自动存档周期（每 N 页存档一次）
     manualProfile: false, // 手动更新设定：开启后 AI 不得修改玩家角色人设
@@ -114,6 +118,13 @@ export const useSettingsStore = defineStore('settings', {
           ns === 'fine' || ns === 'fast' || ns === 'rapid' ? ns : 'normal'
       } catch {
         this.narrativeSpeed = 'normal'
+      }
+      try {
+        const nd = await getSetting<string>(NARRATIVE_DETAIL_KEY)
+        this.narrativeDetail =
+          nd === 'brief' || nd === 'detailed' || nd === 'extreme' ? nd : 'normal'
+      } catch {
+        this.narrativeDetail = 'normal'
       }
       try {
         const a = await getSetting<boolean>(AUTO_SAVE_KEY)
@@ -253,6 +264,14 @@ export const useSettingsStore = defineStore('settings', {
       this.narrativeSpeed = v
       try {
         await putSetting(NARRATIVE_SPEED_KEY, v)
+      } catch {
+        // 保存失败不阻塞设置生效
+      }
+    },
+    async setNarrativeDetail(v: NarrativeDetail) {
+      this.narrativeDetail = v
+      try {
+        await putSetting(NARRATIVE_DETAIL_KEY, v)
       } catch {
         // 保存失败不阻塞设置生效
       }

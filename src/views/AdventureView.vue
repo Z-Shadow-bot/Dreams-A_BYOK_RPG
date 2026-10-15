@@ -53,6 +53,17 @@ function onEventFreqInput(e: Event) {
   void settings.setEventFrequency(eventFreqOrder[i] ?? 'normal')
 }
 
+const narrativeDetailOrder = ['brief', 'normal', 'detailed', 'extreme'] as const
+const narrativeDetailLabels = ['简洁', '常规', '精细', '极致']
+const narrativeDetailIndex = computed(() => {
+  const i = narrativeDetailOrder.indexOf(settings.narrativeDetail)
+  return i >= 0 ? i : 1
+})
+function onNarrativeDetailInput(e: Event) {
+  const i = Number((e.target as HTMLInputElement).value)
+  void settings.setNarrativeDetail(narrativeDetailOrder[i] ?? 'normal')
+}
+
 
 // 允许改写：双击最新页内容可编辑，行动前 AI 先同步改写内容
 const editingPage = ref(false)
@@ -346,6 +357,22 @@ async function rollback() {
                 @input="onEventFreqInput"
               />
               <span class="difficulty-value">{{ eventFreqLabels[eventFreqIndex] }}</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">描写细致程度</span>
+              <input
+                type="range"
+                class="difficulty-range"
+                min="0"
+                max="3"
+                step="1"
+                :value="narrativeDetailIndex"
+                @input="onNarrativeDetailInput"
+              />
+              <span class="difficulty-value">{{ narrativeDetailLabels[narrativeDetailIndex] }}</span>
+            </div>
+            <div v-if="narrativeDetailIndex >= 2" class="setting-hint">
+              建议选择较大的允许模型输出的文本长度
             </div>
             <div class="setting-row">
               <span class="setting-label">游戏难度</span>
@@ -700,6 +727,14 @@ async function rollback() {
   font-weight: 600;
   min-width: 44px;
   text-align: right;
+}
+.setting-hint {
+  font-size: 12px;
+  color: var(--muted);
+  padding-left: 8px;
+  margin-top: -4px;
+  margin-bottom: 4px;
+  line-height: 1.5;
 }
 .option {
   text-align: left;

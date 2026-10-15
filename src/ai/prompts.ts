@@ -1,5 +1,5 @@
 import type { World, SaveData, PanelField, LoreEntry, StoryPage } from '@/types'
-import type { Difficulty, NarrativeSpeed, EventFrequency } from '@/stores/settings'
+import type { Difficulty, NarrativeSpeed, NarrativeDetail, EventFrequency } from '@/stores/settings'
 
 // 每轮注入世界书条目的预算上限（字符）
 const LORE_BUDGET = 4000
@@ -8,6 +8,7 @@ const LORE_BUDGET = 4000
 export interface AdventureRules {
   eventFrequency: EventFrequency
   difficulty: Difficulty
+  narrativeDetail?: NarrativeDetail
 }
 
 function eventFrequencyRule(f: EventFrequency): string {
@@ -36,6 +37,19 @@ function narrativeSpeedRule(speed: NarrativeSpeed): string {
   }
 }
 
+function narrativeDetailRule(d: NarrativeDetail): string {
+  switch (d) {
+    case 'brief':
+      return '【描写细致程度·简洁（优先级高，务必执行）】\n- 只描述剧情对话和事件本身，省略冗余的环境渲染、场景布置、动作过程与感官细节描写。\n- 用最直接的语言交代清楚"发生了什么、说了什么"，保持语句精炼，不卖弄文采。\n- 仅影响 narration 的描写风格，存档与世界书仍须完整记录对剧情有影响的事实信息。'
+    case 'detailed':
+      return '【描写细致程度·精细（优先级高，务必执行）】\n- 在写清剧情对话与事件的同时，注意描写环境、场景、过程、动作等细节，让叙述画面更具体、可感。\n- 对环境布局、物品陈设、角色动作与事件经过做适度展开，但不脱离主线大段铺陈。\n- 仅影响 narration 的描写风格，存档与世界书仍只记录影响剧情动向的事实信息。'
+    case 'extreme':
+      return '【描写细致程度·极致（优先级高，务必执行）】\n- 在精细描写剧情对话、事件、环境、场景与过程的基础上，使用更文学化的语言叙事。\n- 可适度运用比喻、拟人、借代等修辞手法，并综合运用五感（视觉、听觉、嗅觉、触觉、味觉）描写营造氛围与情绪。\n- 允许呈现镜头感与留白，增强画面张力和文学质感，但描写须始终服务于剧情实际进展，不可喧宾夺主。\n- 仅影响 narration 的描写风格，存档与世界书仍只记录影响剧情动向的事实信息。'
+    default:
+      return ''
+  }
+}
+
 function difficultyRule(d: Difficulty): string {
   switch (d) {
     case 'easy':
@@ -55,6 +69,8 @@ export function buildAdventureRulesPart(rules?: AdventureRules): string {
   if (er) parts.push(`- ${er}`)
   const dr = difficultyRule(rules?.difficulty ?? 'normal')
   if (dr) parts.push(`- ${dr}`)
+  const ndr = narrativeDetailRule(rules?.narrativeDetail ?? 'normal')
+  if (ndr) parts.push(`- ${ndr}`)
   if (parts.length === 0) return ''
   return `\n\n【冒险设置指令（高优先级，随本轮生效，务必执行）】\n${parts.join('\n')}`
 }
