@@ -211,12 +211,20 @@ function removeLoreEntry(id: string) {
 const filteredLorebook = computed(() => {
   const q = editLoreFilter.value.trim().toLowerCase()
   if (!q) return editLorebook.value
-  return editLorebook.value.filter(
-    (e) =>
-      e.title.toLowerCase().includes(q) ||
-      e.tagsText.toLowerCase().includes(q) ||
-      e.content.toLowerCase().includes(q),
-  )
+  return editLorebook.value
+    .map((e) => {
+      const rank = e.title.toLowerCase().includes(q)
+        ? 0
+        : e.tagsText.toLowerCase().includes(q)
+          ? 1
+          : e.content.toLowerCase().includes(q)
+            ? 2
+            : 3
+      return { e, rank }
+    })
+    .filter((x) => x.rank < 3)
+    .sort((a, b) => a.rank - b.rank)
+    .map((x) => x.e)
 })
 
 async function saveEdit() {
