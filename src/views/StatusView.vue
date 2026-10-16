@@ -121,6 +121,7 @@ async function toggleDetailedBag(e: Event) {
 }
 
 // 世界书概览
+const loreKeyword = ref('')
 const loreOverview = computed(() => {
   const world = worldStore.currentWorld
   if (!world?.lorebook?.length) return []
@@ -131,9 +132,20 @@ const loreOverview = computed(() => {
       tags: e.tags ?? [],
       required: !!e.required,
       fixed: !!e.fixed,
-      preview: e.content.slice(0, 80) + (e.content.length > 80 ? '…' : ''),
+      content: e.content ?? '',
     }
   })
+})
+
+const filteredLoreOverview = computed(() => {
+  const q = loreKeyword.value.trim().toLowerCase()
+  if (!q) return loreOverview.value
+  return loreOverview.value.filter(
+    (e) =>
+      e.title.toLowerCase().includes(q) ||
+      (e.tags ?? []).some((t) => t.toLowerCase().includes(q)) ||
+      e.content.toLowerCase().includes(q),
+  )
 })
 
 // 地图：优先从世界书 isLocation 条目读取，回退到存档 map（兼容旧存档）
@@ -313,7 +325,8 @@ const characterList = computed(() => {
 
           <section v-if="loreOverview.length > 0" class="block lore-overview">
             <h3 class="block-title">世界书（{{ loreOverview.length }} 条）</h3>
-            <div v-for="entry in loreOverview" :key="entry.id" class="lore-overview-row">
+            <input v-model="loreKeyword" class="lore-search" placeholder="检索条目（标题/标签/内容）" />
+            <div v-for="entry in filteredLoreOverview" :key="entry.id" class="lore-overview-row">
               <div class="lore-overview-head">
                 <span class="lore-overview-title">{{ entry.title }}</span>
                 <span v-if="entry.required" class="lore-flag">必需</span>
@@ -322,8 +335,9 @@ const characterList = computed(() => {
               <div class="lore-overview-tags">
                 <span v-for="t in entry.tags" :key="t" class="lore-tag">{{ t }}</span>
               </div>
-              <p class="lore-overview-preview">{{ entry.preview }}</p>
+              <p class="lore-overview-preview">{{ entry.content }}</p>
             </div>
+            <p v-if="filteredLoreOverview.length === 0" class="muted">没有匹配的条目</p>
           </section>
         </div>
 
@@ -508,6 +522,15 @@ const characterList = computed(() => {
 }
 .lore-overview {
   margin-top: 16px;
+}
+.lore-search {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 12px;
+  margin-bottom: 4px;
+  font-size: 14px;
 }
 .lore-overview-row {
   padding: 10px 0;

@@ -46,6 +46,7 @@ interface LoreEditRow {
 }
 const editLorebook = ref<LoreEditRow[]>([])
 const editLoreFilter = ref('')
+const confirmLoreDeleteId = ref<string | null>(null)
 const editIsPreview = ref(false) // 新建世界后预览模式
 const editTab = ref<'core' | 'schema' | 'lore'>('core')
 const importError = ref('')
@@ -179,6 +180,7 @@ function openEdit(w: World) {
     isCharacter: e.isCharacter,
   }))
   editLoreFilter.value = ''
+  confirmLoreDeleteId.value = null
   editError.value = ''
   editIsPreview.value = false
   editTab.value = 'core'
@@ -198,7 +200,12 @@ function addLoreEntry() {
 }
 
 function removeLoreEntry(id: string) {
+  if (confirmLoreDeleteId.value !== id) {
+    confirmLoreDeleteId.value = id
+    return
+  }
   editLorebook.value = editLorebook.value.filter((e) => e.id !== id)
+  confirmLoreDeleteId.value = null
 }
 
 const filteredLorebook = computed(() => {
@@ -512,7 +519,7 @@ async function doImportDlc() {
 
         <div v-if="editTab === 'lore'" class="edit-panel">
           <label class="field-label">世界书（按需注入的详细设定）</label>
-          <input v-model="editLoreFilter" class="input lore-search" placeholder="检索条目（标题 / 标签 / 内容）…" />
+          <input v-model="editLoreFilter" class="input lore-search" placeholder="检索条目（标题/标签/内容）" />
           <div class="lore-list">
             <div v-for="entry in filteredLorebook" :key="entry.id" class="lore-card">
               <div class="lore-head">
@@ -525,7 +532,13 @@ async function doImportDlc() {
                   <input type="checkbox" v-model="entry.fixed" />
                   <span>固定</span>
                 </label>
-                <button class="schema-del" @click="removeLoreEntry(entry.id)">✕</button>
+                <button
+                  class="schema-del"
+                  :class="{ confirm: confirmLoreDeleteId === entry.id }"
+                  @click="removeLoreEntry(entry.id)"
+                >
+                  {{ confirmLoreDeleteId === entry.id ? '确认删除？' : '✕' }}
+                </button>
               </div>
               <input v-model="entry.tagsText" class="input lore-tags" placeholder="标签（逗号分隔，如：山脉, 鹰族, 边境）" />
               <input v-model="entry.linksText" class="input lore-tags" placeholder="关联条目（逗号分隔的条目标题，注入时一并带入）" />
@@ -817,6 +830,13 @@ async function doImportDlc() {
   color: var(--danger);
   border: none;
   font-size: 16px;
+  padding: 4px 8px;
+}
+.schema-del.confirm {
+  color: #fff;
+  background: var(--danger);
+  border-radius: 6px;
+  font-size: 12px;
   padding: 4px 8px;
 }
 .add-field-btn {
