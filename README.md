@@ -1,2 +1,44 @@
-#You can also try the PWA version at
-https://Z-Shadow-bot.github.io/Dreams-A_BYOK_RPG/
+# Dreams · A BYOK RPG
+
+一个「自带钥匙（Bring Your Own Key）」的文字冒险游戏：游戏本身通过你自己配置的 AI 接口驱动叙事，世界观、角色、剧情走向全部由 AI 实时生成，你可以随心所欲地创造属于你的故事。
+
+## 快速开始
+
+### 方式一：Android 软件版（推荐）
+
+从 [Releases 页面](https://github.com/Z-Shadow-bot/Dreams-A_BYOK_RPG/releases) 下载最新版 `app-release.apk`，安装到 Android 手机即可使用。
+
+首次使用流程：
+
+1. 打开 App，进入「我的」页面，配置 AI 接口（模型地址、API Key）
+2. 创建世界，或导入一个 DLC 世界
+3. 开始冒险
+
+### 方式二：PWA 网页版
+
+直接访问：**[https://Z-Shadow-bot.github.io/Dreams-A_BYOK_RPG/](https://Z-Shadow-bot.github.io/Dreams-A_BYOK_RPG/)**
+
+手机与电脑浏览器均可打开，也支持「添加到主屏幕」当作 App 使用。
+
+## 可下载内容（DLC）
+
+DLC 是「可下载世界包」：纯内容 zip 包，不含任何代码。下载后在 App 内导入即可体验一个带背景音乐（BGM）的完整世界。
+
+### 艾尔泽兰（DLC1）— `艾尔泽兰.zip`
+
+中魔西幻世界，魔法与剑并存。魔法的质感类似《龙腾世纪》《猎魔人》中后期——常见但不泛滥，是文明的一部分而非奇观。包含完整世界观、可选起始角色与专属背景音乐。
+
+### 灰环（DLC2）— `灰环.zip`
+
+公司战争后的近未来赛博朋克都市。旧国家破产，新港市被「天启生物、赫利俄斯能源、奥米克戎数据」三大巨企垄断，城市分为内环、中环、外环，统称灰环。欢迎来到资本掌控一切的世界——注意你的信用点、通缉度与神经稳定。
+
+## 如何导入 DLC
+
+1. 下载 DLC 的 zip 包（**无需解压**）
+2. 打开 App → 进入「世界」页面 → 点击「导入 DLC」
+3. 选择刚下载的 zip 文件，导入完成后即可在世界列表看到新世界并开始冒险
+
+## 说明
+
+- 本项目为 **BYOK** 设计：运行需要自备 AI 接口与 API Key，App 内填写后即可使用
+- 世界书、存档、设置等数据均保存在本机
