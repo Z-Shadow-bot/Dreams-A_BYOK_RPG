@@ -128,8 +128,6 @@ watch(
   },
 )
 
-const worldSettingLen = computed(() => worldStore.currentWorld?.worldSetting?.length ?? 0)
-const isLongSetting = computed(() => worldSettingLen.value > 5000)
 
 const currentScene = computed(() => {
   const world = worldStore.currentWorld
@@ -187,10 +185,16 @@ onMounted(async () => {
     }
   }
   // 从其他页面切回时恢复冒险页滚动位置（当前页未变，watcher 不会回顶部）
+  // 但如果刚完成生成（loadingEndTime 在 3 秒内），则滚动到顶部显示最新内容
   suppressScrollReset = true
   await nextTick()
   const scroller = getScroller()
-  if (scroller && savedAdventureScroll > 0) scroller.scrollTop = savedAdventureScroll
+  const justFinishedLoading = adventure.loadingEndTime > 0 && Date.now() - adventure.loadingEndTime < 3000
+  if (scroller && !justFinishedLoading && savedAdventureScroll > 0) {
+    scroller.scrollTop = savedAdventureScroll
+  } else if (scroller && justFinishedLoading) {
+    scroller.scrollTop = 0
+  }
   savedAdventureScroll = 0
   requestAnimationFrame(() => {
     suppressScrollReset = false
@@ -454,15 +458,6 @@ async function rollback() {
       <button class="retry-btn" @click="adventure.retry()">重试</button>
     </div>
 
-    <div v-if="adventure.loading && adventure.hasAdventure" class="loading-mask">
-      <div class="loading-box">
-        <span>正在生成…</span>
-        <span v-if="loadingSeconds >= 1" class="loading-elapsed">已等待 {{ loadingSeconds }} 秒</span>
-        <span v-if="isLongSetting" class="loading-hint">设定较长，首次生成可能需要更久，请耐心等待</span>
-        <span v-if="loadingSeconds > 180" class="loading-hint">生成耗时较长，建议下次生成前减小「世界书最大匹配条目数」</span>
-        <span v-if="adventure.recoveryNote" class="loading-hint">{{ adventure.recoveryNote }}</span>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -685,7 +680,7 @@ async function rollback() {
   cursor: pointer;
 }
 .narration {
-  font-size: 16px;
+  font-size: var(--font-size-narration, 16px);
   line-height: 1.9;
   white-space: pre-wrap;
 }
@@ -840,35 +835,5 @@ async function rollback() {
   padding: 6px 16px;
   font-size: 13px;
 }
-.loading-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-}
-.loading-box {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px 32px;
-  font-size: 15px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  text-align: center;
-}
-.loading-elapsed {
-  color: var(--muted);
-  font-size: 13px;
-}
-.loading-hint {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-  max-width: 240px;
-}
+
 </style>

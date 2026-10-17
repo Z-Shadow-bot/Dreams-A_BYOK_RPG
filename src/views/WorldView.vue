@@ -508,13 +508,25 @@ async function doImportDlc() {
           </button>
         </div>
 
+        <div class="edit-sticky-actions">
+          <p v-if="editError" class="error">{{ editError }}</p>
+          <div class="modal-actions">
+            <button class="btn ghost" @click="showEdit = false">{{ editIsPreview ? '跳过' : '取消' }}</button>
+            <button v-if="editIsPreview" class="btn primary" @click="saveEditAndStart">保存并开始冒险</button>
+            <button v-else class="btn primary" @click="saveEdit">保存</button>
+          </div>
+        </div>
+
         <div v-if="editTab === 'core'" class="edit-panel">
           <label class="field-label">核心设定（每轮必读，建议精简）</label>
           <textarea v-model="editSetting" class="textarea" rows="12" />
         </div>
 
         <div v-if="editTab === 'schema'" class="edit-panel">
-          <label class="field-label">角色面板字段</label>
+          <div class="schema-header">
+            <label class="field-label">角色面板字段<span class="scroll-hint">（可上下左右滚动查看/编辑）</span></label>
+            <button class="add-field-btn add-field-top" @click="addField">＋ 添加字段</button>
+          </div>
           <div class="schema-list">
             <div v-for="(f, i) in editSchema" :key="i" class="schema-row">
               <input v-model="f.key" class="schema-input key" placeholder="标识" />
@@ -527,7 +539,6 @@ async function doImportDlc() {
               <button class="schema-del" @click="removeField(i)">✕</button>
             </div>
           </div>
-          <button class="add-field-btn" @click="addField">＋ 添加字段</button>
         </div>
 
         <div v-if="editTab === 'lore'" class="edit-panel">
@@ -574,12 +585,6 @@ async function doImportDlc() {
           </div>
         </div>
 
-        <p v-if="editError" class="error">{{ editError }}</p>
-        <div class="modal-actions">
-          <button class="btn ghost" @click="showEdit = false">{{ editIsPreview ? '跳过' : '取消' }}</button>
-          <button v-if="editIsPreview" class="btn primary" @click="saveEditAndStart">保存并开始冒险</button>
-          <button v-else class="btn primary" @click="saveEdit">保存</button>
-        </div>
       </div>
     </div>
   </div>
@@ -814,6 +819,44 @@ async function doImportDlc() {
   max-width: 480px;
   max-height: 85vh;
   overflow-y: auto;
+}
+.edit-sticky-actions {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--surface);
+  padding: 8px 0 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.edit-sticky-actions .modal-actions {
+  margin-top: 8px;
+}
+.edit-sticky-actions .error {
+  margin-top: 4px;
+}
+.schema-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.schema-header .field-label {
+  margin: 0;
+}
+.scroll-hint {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+  margin-left: 4px;
+}
+.add-field-top {
+  flex: none;
+  width: auto;
+  white-space: nowrap;
+  padding: 6px 12px;
+  font-size: 13px;
 }
 .schema-list {
   display: flex;

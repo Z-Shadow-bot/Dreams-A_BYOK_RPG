@@ -43,6 +43,7 @@ const devMode = ref(false)
 const apiConfigOpen = ref(false)
 const genSettingsOpen = ref(false)
 const contextSettingsOpen = ref(false)
+const displaySettingsOpen = ref(false)
 
 interface ModelPreset {
   provider: string
@@ -212,6 +213,23 @@ function onLinkBudgetInput(e: Event) {
 function onWorldSettingMaxInput(e: Event) {
   const n = Number((e.target as HTMLInputElement).value)
   if (Number.isFinite(n) && n > 0) settings.setWorldSettingMax(Math.floor(n))
+}
+
+// 显示设置
+function onFontSizeInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n) && n >= 10 && n <= 28) settings.setFontSize(Math.round(n))
+}
+function onTextColorInput(e: Event) {
+  settings.setTextColor((e.target as HTMLInputElement).value)
+}
+function onBgColorInput(e: Event) {
+  settings.setBgColor((e.target as HTMLInputElement).value)
+}
+function resetDisplaySettings() {
+  settings.setFontSize(16)
+  settings.setTextColor('#ffffff')
+  settings.setBgColor('#000000')
 }
 
 onMounted(async () => {
@@ -591,6 +609,62 @@ async function doClearLog() {
       </template>
     </section>
 
+    <!-- 显示设置（可折叠） -->
+    <section class="block">
+      <button class="section-toggle" @click="displaySettingsOpen = !displaySettingsOpen">
+        <span>显示设置</span>
+        <span class="toggle-arrow">{{ displaySettingsOpen ? '▾' : '▸' }}</span>
+      </button>
+      <template v-if="displaySettingsOpen">
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">正文字体大小</label>
+            <input
+              type="range"
+              class="font-size-range"
+              min="12"
+              max="24"
+              step="1"
+              :value="settings.fontSize"
+              @input="onFontSizeInput"
+            />
+          </div>
+          <span class="font-size-value">{{ settings.fontSize }}px</span>
+        </div>
+        <p class="setting-hint standalone">控制冒险叙事正文的字体大小（12~24px，默认 16px）</p>
+
+        <div class="color-row">
+          <div class="color-control">
+            <label class="field-label">文本颜色</label>
+            <input
+              type="color"
+              class="color-picker"
+              :value="settings.textColor"
+              @input="onTextColorInput"
+            />
+          </div>
+          <div class="color-control">
+            <label class="field-label">背景颜色</label>
+            <input
+              type="color"
+              class="color-picker"
+              :value="settings.bgColor"
+              @input="onBgColorInput"
+            />
+          </div>
+        </div>
+        <p class="setting-hint standalone">自定义全局文本与背景配色，影响所有页面</p>
+
+        <div class="color-presets">
+          <button class="color-preset-btn" @click="resetDisplaySettings">恢复默认</button>
+          <button class="color-preset-btn" @click="settings.setTextColor('#e0e0e0'); settings.setBgColor('#1a1a2e')">深蓝</button>
+          <button class="color-preset-btn" @click="settings.setTextColor('#d4c5a0'); settings.setBgColor('#2d2317')">羊皮纸</button>
+          <button class="color-preset-btn" @click="settings.setTextColor('#a0d8a0'); settings.setBgColor('#0d1f0d')">墨绿</button>
+          <button class="color-preset-btn" @click="settings.setTextColor('#f0f0f0'); settings.setBgColor('#1a0a1a')">暗紫</button>
+        </div>
+      </template>
+    </section>
+
     <!-- 开发者模式 + 日志 + 说明 -->
     <section class="block">
       <label class="dev-row">
@@ -961,5 +1035,59 @@ async function doClearLog() {
   margin-top: 4px;
   font-style: italic;
   opacity: 0.7;
+}
+.font-size-range {
+  width: 100%;
+  accent-color: var(--active);
+}
+.font-size-value {
+  flex: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--active);
+  min-width: 44px;
+  text-align: right;
+}
+.color-row {
+  display: flex;
+  gap: 16px;
+  margin-top: 14px;
+}
+.color-control {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.color-control .field-label {
+  margin: 0;
+}
+.color-picker {
+  width: 100%;
+  height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  cursor: pointer;
+  background: var(--surface-2);
+}
+.color-presets {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.color-preset-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.color-preset-btn:active {
+  background: var(--active);
+  color: #fff;
 }
 </style>

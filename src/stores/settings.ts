@@ -30,6 +30,9 @@ const LORE_BUDGET_KEY = 'lore_budget'
 const LINK_BUDGET_KEY = 'link_budget'
 const WORLD_SETTING_MAX_KEY = 'world_setting_max'
 const OPTION_COUNT_KEY = 'option_count'
+const FONT_SIZE_KEY = 'font_size'
+const TEXT_COLOR_KEY = 'text_color'
+const BG_COLOR_KEY = 'bg_color'
 
 const DEFAULT_CONFIG: APIConfig = {
   baseUrl: '',
@@ -77,6 +80,9 @@ export const useSettingsStore = defineStore('settings', {
     linkBudget: 2000, // 关联条目额外字符预算
     worldSettingMax: 3000, // 核心设定字数上限
     optionCount: 3, // 每轮选项数量上限
+    fontSize: 16, // 正文字体大小（px）
+    textColor: '#ffffff', // 全局文本颜色
+    bgColor: '#000000', // 全局背景颜色
   }),
   actions: {
     async load() {
@@ -209,6 +215,24 @@ export const useSettingsStore = defineStore('settings', {
         this.optionCount = typeof oc === 'number' && oc >= 0 ? Math.round(oc) : 3
       } catch {
         this.optionCount = 3
+      }
+      try {
+        const fs = await getSetting<number>(FONT_SIZE_KEY)
+        this.fontSize = typeof fs === 'number' && fs >= 10 && fs <= 28 ? Math.round(fs) : 16
+      } catch {
+        this.fontSize = 16
+      }
+      try {
+        const tc = await getSetting<string>(TEXT_COLOR_KEY)
+        this.textColor = typeof tc === 'string' && tc.trim() ? tc.trim() : '#ffffff'
+      } catch {
+        this.textColor = '#ffffff'
+      }
+      try {
+        const bc = await getSetting<string>(BG_COLOR_KEY)
+        this.bgColor = typeof bc === 'string' && bc.trim() ? bc.trim() : '#000000'
+      } catch {
+        this.bgColor = '#000000'
       }
       this.loaded = true
     },
@@ -397,6 +421,19 @@ export const useSettingsStore = defineStore('settings', {
       const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 3
       this.optionCount = n
       try { await putSetting(OPTION_COUNT_KEY, n) } catch { /* ignore */ }
+    },
+    async setFontSize(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v >= 10 && v <= 28 ? Math.round(v) : 16
+      this.fontSize = n
+      try { await putSetting(FONT_SIZE_KEY, n) } catch { /* ignore */ }
+    },
+    async setTextColor(v: string) {
+      this.textColor = typeof v === 'string' && v.trim() ? v.trim() : '#ffffff'
+      try { await putSetting(TEXT_COLOR_KEY, this.textColor) } catch { /* ignore */ }
+    },
+    async setBgColor(v: string) {
+      this.bgColor = typeof v === 'string' && v.trim() ? v.trim() : '#000000'
+      try { await putSetting(BG_COLOR_KEY, this.bgColor) } catch { /* ignore */ }
     },
   },
 })

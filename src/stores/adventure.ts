@@ -109,6 +109,7 @@ export const useAdventureStore = defineStore('adventure', {
       lorebook: LoreEntry[] | null
     },
     recoveryNote: null as string | null, // 截断自动降级时展示的提示文案
+    loadingEndTime: 0, // 最近一次生成完成的毫秒时间戳（用于返回冒险页时判断是否需要滚动到顶部）
   }),
   getters: {
     hasAdventure(state): boolean {
@@ -131,6 +132,7 @@ export const useAdventureStore = defineStore('adventure', {
       this.savePoints = []
       this.error = null
       this.loading = false
+      this.loadingEndTime = Date.now()
       this.opened = false
       this.lastInput = null
       this.lastMode = null
@@ -271,6 +273,7 @@ export const useAdventureStore = defineStore('adventure', {
         this.error = errorMessage(e, useSettingsStore().devMode)
       } finally {
         this.loading = false
+      this.loadingEndTime = Date.now()
         clearPendingRequest()
       }
     },
@@ -384,6 +387,7 @@ export const useAdventureStore = defineStore('adventure', {
         this.pendingRetry = null
       } finally {
         this.loading = false
+      this.loadingEndTime = Date.now()
         this.recoveryNote = null
         clearPendingRequest()
       }
