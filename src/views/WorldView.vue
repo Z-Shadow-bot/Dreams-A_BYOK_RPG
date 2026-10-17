@@ -46,6 +46,7 @@ interface LoreEditRow {
 }
 const editLorebook = ref<LoreEditRow[]>([])
 const editLoreFilter = ref('')
+const editLoreOrder = ref<'asc' | 'desc'>('asc')
 const confirmLoreDeleteId = ref<string | null>(null)
 const editIsPreview = ref(false) // 新建世界后预览模式
 const editTab = ref<'core' | 'schema' | 'lore'>('core')
@@ -226,6 +227,10 @@ const filteredLorebook = computed(() => {
     .sort((a, b) => a.rank - b.rank)
     .map((x) => x.e)
 })
+
+const displayedLorebook = computed(() =>
+  editLoreOrder.value === 'desc' ? [...filteredLorebook.value].reverse() : filteredLorebook.value,
+)
 
 async function saveEdit() {
   if (!editId.value) return
@@ -526,10 +531,21 @@ async function doImportDlc() {
         </div>
 
         <div v-if="editTab === 'lore'" class="edit-panel">
-          <label class="field-label">世界书（按需注入的详细设定）</label>
-          <input v-model="editLoreFilter" class="input lore-search" placeholder="检索条目（标题/标签/内容）" />
+          <div class="lore-toolbar">
+            <label class="field-label">世界书（按需注入的详细设定）</label>
+            <button
+              class="lore-order-btn"
+              @click="editLoreOrder = editLoreOrder === 'asc' ? 'desc' : 'asc'"
+            >
+              {{ editLoreOrder === 'asc' ? '正序 ↑' : '倒序 ↓' }}
+            </button>
+          </div>
+          <div class="lore-toolbar">
+            <input v-model="editLoreFilter" class="input lore-search" placeholder="检索条目（标题/标签/内容）" />
+            <button class="add-field-btn lore-add-top" @click="addLoreEntry">＋ 添加条目</button>
+          </div>
           <div class="lore-list">
-            <div v-for="entry in filteredLorebook" :key="entry.id" class="lore-card">
+            <div v-for="entry in displayedLorebook" :key="entry.id" class="lore-card">
               <div class="lore-head">
                 <input v-model="entry.title" class="input lore-title" placeholder="条目标题（可选）" />
                 <label class="lore-required">
@@ -552,11 +568,10 @@ async function doImportDlc() {
               <input v-model="entry.linksText" class="input lore-tags" placeholder="关联条目（逗号分隔的条目标题，注入时一并带入）" />
               <textarea v-model="entry.content" class="textarea" rows="4" placeholder="条目详细设定内容" />
             </div>
-            <p v-if="filteredLorebook.length === 0" class="muted-text">
+            <p v-if="displayedLorebook.length === 0" class="muted-text">
               {{ editLorebook.length === 0 ? '暂无世界书条目' : '没有匹配的条目' }}
             </p>
           </div>
-          <button class="add-field-btn" @click="addLoreEntry">＋ 添加条目</button>
         </div>
 
         <p v-if="editError" class="error">{{ editError }}</p>
@@ -858,6 +873,31 @@ async function doImportDlc() {
 }
 .lore-search {
   margin-bottom: 10px;
+  flex: 1;
+}
+.lore-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lore-toolbar .field-label {
+  margin-bottom: 0;
+}
+.lore-order-btn {
+  flex: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.lore-add-top {
+  flex: none;
+  width: auto;
+  white-space: nowrap;
+  padding: 8px 12px;
 }
 .lore-list {
   display: flex;

@@ -93,6 +93,7 @@ export interface World {
   bgm?: Record<string, string> // 场景类型 -> 音乐文件名（相对 bgm/ 目录）
   presetCharacters?: PresetCharacter[] // DLC 预设角色（label 简称 + description 完整设定），导入后供玩家选择
   characterFallback?: string // 角色来源兜底：玩家创建的角色不符合世界规则时的兜底处理，仅在创建角色（开始冒险）时注入，不在后续行动中使用
+  loreLimit?: number // 单轮注入的世界书最大匹配条目数（默认 12；越大每轮消耗 token 越多，生成越慢）
 }
 
 // ===== 预设角色（DLC 提供的可选起始角色） =====

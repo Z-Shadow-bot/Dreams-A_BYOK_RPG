@@ -155,7 +155,7 @@ export const useWorldStore = defineStore('world', {
     },
     async updateWorld(
     id: string,
-    updates: { name?: string; worldSetting?: string; panelSchema?: PanelField[]; lorebook?: LoreEntry[]; dlcId?: string; sceneField?: string; bgm?: Record<string, string>; presetCharacters?: PresetCharacter[]; characterFallback?: string },
+    updates: { name?: string; worldSetting?: string; panelSchema?: PanelField[]; lorebook?: LoreEntry[]; dlcId?: string; sceneField?: string; bgm?: Record<string, string>; presetCharacters?: PresetCharacter[]; characterFallback?: string; loreLimit?: number },
   ) {
     const w = this.worlds.find((x) => x.id === id)
     if (!w) return
@@ -170,6 +170,7 @@ export const useWorldStore = defineStore('world', {
       bgm: updates.bgm !== undefined ? updates.bgm : w.bgm,
       presetCharacters: updates.presetCharacters !== undefined ? updates.presetCharacters : w.presetCharacters,
       characterFallback: updates.characterFallback !== undefined ? updates.characterFallback : w.characterFallback,
+      loreLimit: updates.loreLimit !== undefined ? updates.loreLimit : w.loreLimit,
       updatedAt: Date.now(),
     }
     await putWorld(updated)
@@ -182,6 +183,7 @@ export const useWorldStore = defineStore('world', {
     w.bgm = updated.bgm
     w.presetCharacters = updated.presetCharacters
     w.characterFallback = updated.characterFallback
+    w.loreLimit = updated.loreLimit
     w.updatedAt = updated.updatedAt
     },
     // 基于世界的原始快照（旧世界无快照时用当前值）复制生成新世界，用于尝试多条冒险路线
