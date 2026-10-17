@@ -84,7 +84,7 @@ async function onLoreLimitInput(e: Event) {
   }
   const n = Number(raw)
   if (!Number.isFinite(n)) return
-  const v = Math.min(50, Math.max(1, Math.floor(n)))
+  const v = Math.max(1, Math.floor(n))
   if (v !== n) loreLimitText.value = String(v)
   await worldStore.updateWorld(w.id, { loreLimit: v })
 }
@@ -438,8 +438,7 @@ async function rollback() {
                 type="number"
                 class="lore-limit-input"
                 min="1"
-                max="50"
-                placeholder="默认 12"
+                placeholder="默认 15"
                 :value="loreLimitText"
                 @input="onLoreLimitInput"
               />

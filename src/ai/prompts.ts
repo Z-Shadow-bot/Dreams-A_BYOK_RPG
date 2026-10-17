@@ -4,7 +4,7 @@ import type { Difficulty, NarrativeSpeed, NarrativeDetail, EventFrequency } from
 // 每轮注入世界书条目的预算上限（字符）
 const LORE_BUDGET = 4000
 // 每轮注入世界书条目的数量上限（默认；可在冒险设置中按世界单独调整）
-const DEFAULT_LORE_LIMIT = 12
+const DEFAULT_LORE_LIMIT = 15
 
 // ===== 冒险设置规则（高优先级指令，生成"行动"时随本轮注入） =====
 export interface AdventureRules {
@@ -312,7 +312,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
     }
   }
   // 其余条目按相关度填充剩余预算（数量受世界书最大匹配条目数限制）
-  const loreLimit = Number.isFinite(world.loreLimit) && (world.loreLimit ?? 0) > 0 ? Math.min(50, Math.floor(world.loreLimit ?? DEFAULT_LORE_LIMIT)) : DEFAULT_LORE_LIMIT
+  const loreLimit = Number.isFinite(world.loreLimit) && (world.loreLimit ?? 0) > 0 ? Math.floor(world.loreLimit ?? DEFAULT_LORE_LIMIT) : DEFAULT_LORE_LIMIT
   for (const s of scored) {
     if (s.e.required) continue
     if (pickedIds.has(s.e.id)) continue
