@@ -5,12 +5,13 @@ import {
   buildActionPrompt,
   buildCharacterGenPrompt,
   buildWorldGenPrompt,
-  buildActionRecoveryDiffPrompt,
+
   buildActionRecoverySplitNarrationPrompt,
   buildActionRecoverySplitSavePrompt,
   buildRewriteSyncPrompt,
   buildOptionsFallbackPrompt,
   type AdventureRules,
+  type LoreInjectionConfig,
 } from './prompts'
 import { useSettingsStore } from '@/stores/settings'
 import type { NarrativeSpeed } from '@/stores/settings'
@@ -32,7 +33,12 @@ import { createId } from '@/types'
 function narrationRange(config: APIConfig): { min: number; max: number } {
   const min = typeof config.narrationMin === 'number' ? config.narrationMin : 200
   const max = typeof config.narrationMax === 'number' ? config.narrationMax : 500
-  return { min, max: Math.max(min, max) }
+  return { min, max }
+}
+
+function getLoreCfg(): LoreInjectionConfig {
+  const st = useSettingsStore()
+  return { loreLimit: st.loreLimit, loreBudget: st.loreBudget, linkBudget: st.linkBudget }
 }
 
 // ===== 深度清洗工具：防御 AI 返回非预期结构导致页面崩溃 =====
@@ -121,7 +127,8 @@ export function normalizeSave(raw: unknown, panelSchema: PanelField[]): SaveData
 
 function normalizeOptions(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
-  return raw.filter((x): x is string => typeof x === 'string').slice(0, 3)
+  const max = useSettingsStore().optionCount
+  return raw.filter((x): x is string => typeof x === 'string').slice(0, max)
 }
 
 // 手动更新设定开关：开启后 AI 生成的存档不得修改玩家角色人设（characterProfile 强制保持原值）
@@ -219,12 +226,23 @@ export function mergeSave(base: SaveData, raw: unknown, panelSchema: PanelField[
 }
 
 // 归一化单条世界书条目（AI 返回无 id，由这里分配）
+// 支持 remove 标记：AI 返回 { title, remove: true } 表示删除该条目（无需 content）
 function normalizeLoreEntry(v: unknown): LoreEntry | null {
   const e = (v ?? {}) as Record<string, unknown>
+  const title = asString(e.title).trim()
+  // 删除条目：只需 title + remove 标记，不需要 content
+  if (e.remove === true && title) {
+    return {
+      id: createId(),
+      title,
+      tags: [],
+      content: '',
+      remove: true,
+    }
+  }
   const content = asString(e.content).trim()
   if (!content) return null
   const tags = asStringArray(e.tags).map((t) => t.trim()).filter((t) => !!t)
-  const title = asString(e.title).trim()
   return {
     id: createId(),
     title: title || undefined,
@@ -257,7 +275,7 @@ export async function generateWorld(
   opts: { summarize?: boolean; expand?: boolean } = {},
 ): Promise<{ worldSetting: string; lorebook: LoreEntry[]; panelSchema: PanelField[] }> {
   const content = await chat(
-    [{ role: 'user', content: buildWorldGenPrompt(userInput, opts) }],
+    [{ role: 'user', content: buildWorldGenPrompt(userInput, opts, useSettingsStore().worldSettingMax) }],
     config,
   )
   const data = extractJson(content) as { worldSetting?: string; lorebook?: unknown[]; panelSchema?: PanelField[] }
@@ -301,7 +319,7 @@ export async function generateCharacter(
   const content = await chat(
     [
       { role: 'system', content: buildActionSystemPrompt(min, max) },
-      { role: 'user', content: buildCharacterGenPrompt(world, userInput, min, max, opts, hiddenPreset) + bagDetailRule(detailedBag) },
+      { role: 'user', content: buildCharacterGenPrompt(world, userInput, min, max, opts, hiddenPreset, getLoreCfg()) + bagDetailRule(detailedBag) },
     ],
     config,
   )
@@ -326,7 +344,7 @@ export async function generateAction(
   onRecoverStart?: () => void,
 ): Promise<AIResponse> {
   const { min, max } = narrationRange(config)
-  const system = buildActionSystemPrompt(min, max, world, detailedBag)
+  const system = buildActionSystemPrompt(min, max, world, detailedBag, true)
   const st = useSettingsStore()
   const rules: AdventureRules = { eventFrequency: st.eventFrequency, difficulty: st.difficulty, narrativeDetail: st.narrativeDetail }
   try {
@@ -335,7 +353,7 @@ export async function generateAction(
         { role: 'system', content: system },
         {
           role: 'user',
-          content: buildActionPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules),
+          content: buildActionPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules, getLoreCfg()),
         },
       ],
       config,
@@ -344,7 +362,7 @@ export async function generateAction(
     return {
       narration: typeof data.narration === 'string' ? data.narration : '',
       options: normalizeOptions(data.options),
-      save: lockProfileIfNeeded(mergeSave(currentSave, data.save, world.panelSchema), currentSave),
+      save: lockProfileIfNeeded(applySavePatch(currentSave, data.patchSave ?? data.save ?? {}), currentSave),
       loreUpdates: normalizeLorebook(data.loreUpdates),
     }
   } catch (e) {
@@ -368,7 +386,7 @@ export async function ensureOptions(
   fallback: 'generic' | 'regenerate',
 ): Promise<string[]> {
   const valid = options.filter((o) => typeof o === 'string' && o.trim())
-  if (valid.length > 0) return valid.slice(0, 3)
+  if (valid.length > 0) return valid.slice(0, useSettingsStore().optionCount)
   if (fallback === 'generic') return [...GENERIC_OPTIONS]
   try {
     const content = await chat(
@@ -438,7 +456,7 @@ export function applySavePatch(base: SaveData, patch: unknown): SaveData {
   return out
 }
 
-// 截断后的降级重试：diff（精简修改指令）或 split（拆分两次请求）
+// 截断后的降级重试：split（拆分两次请求，分别生成叙事与存档变化）
 async function recoverAction(
   world: World,
   currentSave: SaveData,
@@ -449,37 +467,17 @@ async function recoverAction(
   narrativeSpeed: NarrativeSpeed,
 ): Promise<AIResponse> {
   const { min, max } = narrationRange(config)
-  const system = buildActionSystemPrompt(min, max, world, detailedBag)
+  const system = buildActionSystemPrompt(min, max, world, detailedBag, true)
   const st = useSettingsStore()
   const rules: AdventureRules = { eventFrequency: st.eventFrequency, difficulty: st.difficulty, narrativeDetail: st.narrativeDetail }
-  const strategy = st.truncateStrategy
-  if (strategy === 'diff') {
-    const content = await chat(
-      [
-        { role: 'system', content: system },
-        {
-          role: 'user',
-          content: buildActionRecoveryDiffPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules),
-        },
-      ],
-      config,
-    )
-    const data = extractJson(content) as Record<string, any>
-    const patched = lockProfileIfNeeded(applySavePatch(currentSave, data.patchSave), currentSave)
-    return {
-      narration: typeof data.narration === 'string' ? data.narration : '',
-      options: normalizeOptions(data.options),
-      save: normalizeSave(patched, world.panelSchema),
-      loreUpdates: normalizeLorebook(data.loreUpdates),
-    }
-  }
-  // split：第 1 次生成叙事与选项，第 2 次生成完整存档
+  const loreCfg = getLoreCfg()
+  // split：第 1 次生成叙事+选项+存档变化，第 2 次生成世界书更新
   const p1 = await chat(
     [
       { role: 'system', content: system },
       {
         role: 'user',
-        content: buildActionRecoverySplitNarrationPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules),
+        content: buildActionRecoverySplitNarrationPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules, loreCfg),
       },
     ],
     config,
@@ -487,12 +485,13 @@ async function recoverAction(
   const d1 = extractJson(p1) as Record<string, any>
   const narration = typeof d1.narration === 'string' ? d1.narration : ''
   const options = normalizeOptions(d1.options)
+  const patchedSave = lockProfileIfNeeded(applySavePatch(currentSave, d1.patchSave ?? d1.save ?? {}), currentSave)
   const p2 = await chat(
     [
       { role: 'system', content: system },
       {
         role: 'user',
-        content: buildActionRecoverySplitSavePrompt(world, currentSave, narration || '（本轮未生成叙事）', userInput),
+        content: buildActionRecoverySplitSavePrompt(world, patchedSave, narration || '（本轮未生成叙事）', userInput, loreCfg),
       },
     ],
     config,
@@ -501,7 +500,7 @@ async function recoverAction(
   return {
     narration,
     options,
-    save: lockProfileIfNeeded(mergeSave(currentSave, d2.save, world.panelSchema), currentSave),
+    save: patchedSave,
     loreUpdates: normalizeLorebook(d2.loreUpdates),
   }
 }
@@ -515,12 +514,12 @@ export async function syncAfterRewrite(
   onRecoverStart?: () => void,
 ): Promise<{ save: SaveData; loreUpdates: LoreEntry[] }> {
   const { min, max } = narrationRange(config)
-  const system = buildActionSystemPrompt(min, max, world)
+  const system = buildActionSystemPrompt(min, max, world, false, true)
   try {
     const content = await chat(
       [
         { role: 'system', content: system },
-        { role: 'user', content: buildRewriteSyncPrompt(world, currentSave, page) },
+        { role: 'user', content: buildRewriteSyncPrompt(world, currentSave, page, getLoreCfg()) },
       ],
       config,
     )

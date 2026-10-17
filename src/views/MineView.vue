@@ -39,6 +39,11 @@ const saved = ref(false)
 const error = ref('')
 const devMode = ref(false)
 
+// 折叠栏状态
+const apiConfigOpen = ref(false)
+const genSettingsOpen = ref(false)
+const contextSettingsOpen = ref(false)
+
 interface ModelPreset {
   provider: string
   model: string
@@ -165,8 +170,48 @@ async function removeProfile(id: string, name: string) {
   await settings.removeApiProfile(id)
 }
 
-function setTruncateStrategy(mode: 'diff' | 'split') {
-  settings.setTruncateStrategy(mode)
+
+// 生成设置：narrationMin/Max/maxWaitTime 随 API 配置保存，optionCount 独立保存
+async function onGenSettingsChange() {
+  const narrationMin = Number(form.narrationMin)
+  const narrationMax = Number(form.narrationMax)
+  const maxWaitTime = Number(form.maxWaitTime)
+  if (
+    Number.isFinite(narrationMin) && narrationMin >= 50 &&
+    Number.isFinite(narrationMax) && narrationMax <= 5000 &&
+    Number.isFinite(maxWaitTime) && maxWaitTime >= 10 &&
+    narrationMin <= narrationMax
+  ) {
+    await settings.saveConfig({
+      ...settings.config,
+      narrationMin,
+      narrationMax,
+      maxWaitTime,
+    })
+  }
+}
+
+function onOptionCountInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n) && n >= 0) settings.setOptionCount(Math.floor(n))
+}
+
+// 上下文设置
+function onLoreLimitInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n) && n >= 0) settings.setLoreLimit(Math.floor(n))
+}
+function onLoreBudgetInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n) && n > 0) settings.setLoreBudget(Math.floor(n))
+}
+function onLinkBudgetInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n) && n >= 0) settings.setLinkBudget(Math.floor(n))
+}
+function onWorldSettingMaxInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n) && n > 0) settings.setWorldSettingMax(Math.floor(n))
 }
 
 onMounted(async () => {
@@ -321,6 +366,7 @@ async function doClearLog() {
       <h1>我的</h1>
     </header>
 
+    <!-- 我的 API -->
     <section class="block api-profiles-block">
       <h3 class="block-title">我的 API</h3>
       <p v-if="myApiList.length === 0" class="api-empty">
@@ -340,132 +386,217 @@ async function doClearLog() {
       </div>
     </section>
 
+    <!-- API 配置（可折叠） -->
     <section class="block">
-      <h3 class="block-title">API 配置（OpenAI 兼容格式）</h3>
+      <button class="section-toggle" @click="apiConfigOpen = !apiConfigOpen">
+        <span>API 配置</span>
+        <span class="toggle-arrow">{{ apiConfigOpen ? '▾' : '▸' }}</span>
+      </button>
+      <template v-if="apiConfigOpen">
+        <p class="section-subtitle">OpenAI 兼容格式</p>
 
-      <label class="field-label">模型名称</label>
-      <input
-        v-model="form.model"
-        list="model-presets"
-        class="input"
-        placeholder="点击选择常见模型，或手动输入"
-        @change="onModelChange"
-      />
-      <datalist id="model-presets">
-        <option
-          v-for="p in MODEL_PRESETS"
-          :key="p.model"
-          :value="p.model"
-          :label="`${p.provider} · ${p.model}`"
+        <label class="field-label">模型名称</label>
+        <input
+          v-model="form.model"
+          list="model-presets"
+          class="input"
+          placeholder="点击选择常见模型，或手动输入"
+          @change="onModelChange"
         />
-      </datalist>
-
-      <label class="field-label">API 地址</label>
-      <input v-model="form.baseUrl" class="input" placeholder="选择模型后自动填充，可手动修改" />
-
-      <label class="field-label">
-        API Key
-        <span v-if="settings.hasKey" class="key-tip">（已保存）</span>
-      </label>
-      <input
-        v-model="apiKey"
-        class="input"
-        type="password"
-        :placeholder="settings.hasKey ? '留空则保留原 Key' : 'sk-…'"
-      />
-
-      <label class="field-label">额外请求头（JSON，可选）</label>
-      <textarea v-model="form.extraHeadersText" class="textarea" rows="3" />
-
-      <div class="setting-row">
-        <div class="setting-control">
-          <label class="field-label">温度</label>
-          <input
-            v-model.number="form.temperature"
-            class="input"
-            type="number"
-            step="0.1"
-            min="0"
-            max="2"
+        <datalist id="model-presets">
+          <option
+            v-for="p in MODEL_PRESETS"
+            :key="p.model"
+            :value="p.model"
+            :label="`${p.provider} · ${p.model}`"
           />
-        </div>
-        <p class="setting-hint">{{ temperatureHint }}</p>
-      </div>
+        </datalist>
 
-      <div class="range-row">
-        <div class="setting-control">
-          <label class="field-label">每轮叙事字数下限</label>
-          <input v-model.number="form.narrationMin" class="input" type="number" step="10" min="50" />
-        </div>
-        <div class="setting-control">
-          <label class="field-label">每轮叙事字数上限</label>
-          <input v-model.number="form.narrationMax" class="input" type="number" step="10" min="50" />
-        </div>
-      </div>
-      <p class="setting-hint standalone">控制每次行动返回的叙事正文长短（约字）：设小更简洁、响应更快，设大更详细、耗时更久</p>
+        <label class="field-label">API 地址</label>
+        <input v-model="form.baseUrl" class="input" placeholder="选择模型后自动填充，可手动修改" />
 
-      <div class="setting-row">
-        <div class="setting-control">
-          <label class="field-label">单次请求最长等待（秒）</label>
-          <input v-model.number="form.maxWaitTime" class="input" type="number" step="10" min="10" />
+        <label class="field-label">
+          API Key
+          <span v-if="settings.hasKey" class="key-tip">（已保存）</span>
+        </label>
+        <input
+          v-model="apiKey"
+          class="input"
+          type="password"
+          :placeholder="settings.hasKey ? '留空则保留原 Key' : 'sk-…'"
+        />
+
+        <label class="field-label">额外请求头（JSON，可选）</label>
+        <textarea v-model="form.extraHeadersText" class="textarea" rows="3" />
+
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">温度</label>
+            <input
+              v-model.number="form.temperature"
+              class="input"
+              type="number"
+              step="0.1"
+              min="0"
+              max="2"
+            />
+          </div>
+          <p class="setting-hint">{{ temperatureHint }}</p>
         </div>
-        <p class="setting-hint">这是防止模型卡住/超时的保险上限，不是生成速度：设短不会更快，只会在答案未答完时提前中断。模型较慢或设定较长时建议加大（如 600）</p>
-      </div>
 
-      <p v-if="error" class="error">{{ error }}</p>
-      <button class="save-btn" @click="save">{{ saved ? '已保存 ✓' : '保存配置' }}</button>
-      <button class="save-btn ghost" @click="saveAsProfile">保存为我的 API（快速切换）</button>
+        <p v-if="error" class="error">{{ error }}</p>
+        <button class="save-btn" @click="save">{{ saved ? '已保存 ✓' : '保存配置' }}</button>
+        <button class="save-btn ghost" @click="saveAsProfile">保存为我的 API（快速切换）</button>
+      </template>
+    </section>
 
+    <!-- 生成设置（可折叠） -->
+    <section class="block">
+      <button class="section-toggle" @click="genSettingsOpen = !genSettingsOpen">
+        <span>生成设置</span>
+        <span class="toggle-arrow">{{ genSettingsOpen ? '▾' : '▸' }}</span>
+      </button>
+      <template v-if="genSettingsOpen">
+        <div class="range-row">
+          <div class="setting-control">
+            <label class="field-label">每轮叙事字数下限</label>
+            <input v-model.number="form.narrationMin" class="input" type="number" step="10" min="50" @change="onGenSettingsChange" />
+          </div>
+          <div class="setting-control">
+            <label class="field-label">每轮叙事字数上限</label>
+            <input v-model.number="form.narrationMax" class="input" type="number" step="10" min="50" @change="onGenSettingsChange" />
+          </div>
+        </div>
+        <p class="setting-hint standalone">控制每次行动返回的叙事正文长短（约字）：设小更简洁、响应更快，设大更详细、耗时更久</p>
+
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">单次请求最长等待（秒）</label>
+            <input v-model.number="form.maxWaitTime" class="input" type="number" step="10" min="10" @change="onGenSettingsChange" />
+          </div>
+          <p class="setting-hint">这是防止模型卡住/超时的保险上限，不是生成速度：设短不会更快，只会在答案未答完时提前中断。模型较慢或设定较长时建议加大（如 600）</p>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">选项数量上限</label>
+            <input
+              type="number"
+              class="input"
+              min="0"
+              step="1"
+              :value="settings.optionCount"
+              @input="onOptionCountInput"
+            />
+          </div>
+          <p class="setting-hint">每轮生成可选行动方向的最大数量（默认 3）</p>
+        </div>
+
+        <div class="truncate-group">
+
+          <p class="truncate-label">AI 选项未正常生成时</p>
+          <label class="radio-row">
+            <input
+              type="radio"
+              value="generic"
+              :checked="settings.optionFallback === 'generic'"
+              @change="settings.setOptionFallback('generic')"
+            />
+            <span>使用通用兜底选项（推荐）：直接填入固定的通用行动选项</span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="radio"
+              value="regenerate"
+              :checked="settings.optionFallback === 'regenerate'"
+              @change="settings.setOptionFallback('regenerate')"
+            />
+            <span>追加一次补全请求：让 AI 基于本轮叙事重新生成选项（失败回退通用）</span>
+          </label>
+          <p class="truncate-hint">当 AI 返回的选项为空或缺失时自动触发，保证玩家总有可选行动</p>
+        </div>
+      </template>
+    </section>
+
+    <!-- 上下文设置（可折叠） -->
+    <section class="block">
+      <button class="section-toggle" @click="contextSettingsOpen = !contextSettingsOpen">
+        <span>上下文设置</span>
+        <span class="toggle-arrow">{{ contextSettingsOpen ? '▾' : '▸' }}</span>
+      </button>
+      <template v-if="contextSettingsOpen">
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">世界书最大匹配条目数</label>
+            <input
+              type="number"
+              class="input"
+              min="0"
+              step="1"
+              placeholder="默认 15"
+              :value="settings.loreLimit"
+              @input="onLoreLimitInput"
+            />
+          </div>
+          <p class="setting-hint">每轮从世界书中最多注入多少条匹配条目（默认 15，越大消耗 token 越多）</p>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">世界书注入字符上限</label>
+            <input
+              type="number"
+              class="input"
+              min="1"
+              step="100"
+              placeholder="默认 4000"
+              :value="settings.loreBudget"
+              @input="onLoreBudgetInput"
+            />
+          </div>
+          <p class="setting-hint">每轮注入世界书的总字符预算（默认 4000）</p>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">关联条目额外预算</label>
+            <input
+              type="number"
+              class="input"
+              min="0"
+              step="100"
+              placeholder="默认 2000"
+              :value="settings.linkBudget"
+              @input="onLinkBudgetInput"
+            />
+          </div>
+          <p class="setting-hint">关联条目（links）展开的额外字符预算（默认 2000）</p>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">核心设定字数上限</label>
+            <input
+              type="number"
+              class="input"
+              min="1"
+              step="100"
+              placeholder="默认 3000"
+              :value="settings.worldSettingMax"
+              @input="onWorldSettingMaxInput"
+            />
+          </div>
+          <p class="setting-hint">世界核心设定（worldSetting）的最大字数，超出时精简并拆入世界书条目（默认 3000）</p>
+        </div>
+      </template>
+    </section>
+
+    <!-- 开发者模式 + 日志 + 说明 -->
+    <section class="block">
       <label class="dev-row">
         <input type="checkbox" v-model="devMode" @change="toggleDevMode" />
         <span>开发者模式报错：显示完整错误信息（含技术详情），便于排查问题</span>
       </label>
-
-      <div class="truncate-group">
-        <p class="truncate-label">AI 输出过长被截断时</p>
-        <label class="radio-row">
-          <input
-            type="radio"
-            value="diff"
-            :checked="settings.truncateStrategy === 'diff'"
-            @change="setTruncateStrategy('diff')"
-          />
-          <span>精简修改指令（推荐）：让 AI 只输出存档变化，本地自动应用</span>
-        </label>
-        <label class="radio-row">
-          <input
-            type="radio"
-            value="split"
-            :checked="settings.truncateStrategy === 'split'"
-            @change="setTruncateStrategy('split')"
-          />
-          <span>拆分输出：分两次请求分别生成剧情与存档</span>
-        </label>
-        <p class="truncate-hint">仅在输出被截断时自动触发重试；正常情况下仍为完整输出，保证记忆连续</p>
-      </div>
-
-      <div class="truncate-group">
-        <p class="truncate-label">AI 选项未正常生成时</p>
-        <label class="radio-row">
-          <input
-            type="radio"
-            value="generic"
-            :checked="settings.optionFallback === 'generic'"
-            @change="settings.setOptionFallback('generic')"
-          />
-          <span>使用通用兜底选项（推荐）：直接填入固定的通用行动选项</span>
-        </label>
-        <label class="radio-row">
-          <input
-            type="radio"
-            value="regenerate"
-            :checked="settings.optionFallback === 'regenerate'"
-            @change="settings.setOptionFallback('regenerate')"
-          />
-          <span>追加一次补全请求：让 AI 基于本轮叙事重新生成选项（失败回退通用）</span>
-        </label>
-        <p class="truncate-hint">当 AI 返回的选项为空或缺失时自动触发，保证玩家总有可选行动</p>
-      </div>
 
       <div class="log-row">
         <button class="log-btn" :disabled="logBusy" @click="downloadLog">
@@ -522,12 +653,35 @@ async function doClearLog() {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 16px;
+  margin-bottom: 16px;
 }
 .block-title {
   font-size: 14px;
   color: var(--muted);
   font-weight: 600;
   margin-bottom: 14px;
+}
+.section-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+}
+.toggle-arrow {
+  color: var(--muted);
+  font-size: 14px;
+}
+.section-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 12px 0 0;
 }
 .field-label {
   display: block;
@@ -668,7 +822,6 @@ async function doClearLog() {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 14px;
   font-size: 13px;
   color: var(--muted);
   cursor: pointer;

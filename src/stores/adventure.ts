@@ -53,6 +53,7 @@ function clearPendingRequest(): void {
 }
 
 // 将 AI 返回的世界书更新合并进现有世界书：按 title 匹配更新，否则新增
+// 支持 remove 标记：AI 返回 { title, remove: true } 时删除对应条目
 // 仅当世界已拥有 lorebook 字段时才合并（避免旧世界被意外创建世界书）
 function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreEntry[] | null {
   if (!updates || updates.length === 0) return null
@@ -61,6 +62,13 @@ function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreE
   for (const u of updates) {
     const title = (u.title ?? '').trim()
     const idx = title ? book.findIndex((b) => (b.title ?? '').trim() === title) : -1
+    // 删除条目：按 title 匹配删除（fixed 条目不可删除）
+    if (u.remove === true) {
+      if (idx >= 0 && !book[idx].fixed) {
+        book.splice(idx, 1)
+      }
+      continue
+    }
     if (idx >= 0) {
       // 固定条目：AI 不得修改内容/tags/title/fixed/links，仅允许移除 hidden（彩蛋出场）
       if (book[idx].fixed) {
@@ -71,7 +79,7 @@ function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreE
       }
       book[idx] = { ...book[idx], title: u.title, tags: u.tags, content: u.content, required: u.required, fixed: u.fixed, links: u.links, hidden: u.hidden, isLocation: u.isLocation, isCharacter: u.isCharacter }
     } else {
-      book.push({ ...u })
+      book.push({ ...u, remove: undefined })
     }
   }
   return book

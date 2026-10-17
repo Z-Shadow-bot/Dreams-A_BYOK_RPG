@@ -3,8 +3,22 @@ import type { Difficulty, NarrativeSpeed, NarrativeDetail, EventFrequency } from
 
 // 每轮注入世界书条目的预算上限（字符）
 const LORE_BUDGET = 4000
-// 每轮注入世界书条目的数量上限（默认；可在冒险设置中按世界单独调整）
+// 每轮注入世界书条目的数量上限（默认；可在上下文设置中全局调整）
 const DEFAULT_LORE_LIMIT = 15
+
+// 世界书注入配置（由全局设置传入）
+export interface LoreInjectionConfig {
+  loreLimit?: number
+  loreBudget?: number
+  linkBudget?: number
+}
+
+// patchSave 格式说明（让 AI 输出存档修改指令而非完整存档，减小输出体积）
+const PATCH_SAVE_DESC = `patchSave 格式说明（关键：这是修改指令，不是完整存档！只列变化，不输出完整存档）：
+- panel：只列出值发生变化的面板键，如 { "hp": 75, "mood": "紧张" }；未列出的键保持原样。
+- characterProfile / experience / worldTime / overview（impression、ongoing、recentEvents、latestProgress）：需要整体替换时才提供，只替换列出的字段；无变化省略。
+- 数组字段 inventory.equipment / inventory.items / map / characters：无变化时整体省略；有增删或状态变化时必须提供完整新数组。
+- hidden：用 { "add": { "键": "值" }, "remove": ["键"] } 表达增量修改；无变化省略。`
 
 // ===== 冒险设置规则（高优先级指令，生成"行动"时随本轮注入） =====
 export interface AdventureRules {
@@ -78,7 +92,7 @@ export function buildAdventureRulesPart(rules?: AdventureRules): string {
 }
 
 // ===== 全局规则（每次生成"行动"和"存档"时都必须遵守） =====
-export function buildGlobalRules(narrationMin: number, narrationMax: number): string {
+export function buildGlobalRules(_narrationMin: number, narrationMax: number): string {
   return `你是一个文字冒险游戏的叙事引擎。你必须严格遵循以下所有规则。
 
 # 核心四原则
@@ -110,7 +124,7 @@ export function buildGlobalRules(narrationMin: number, narrationMax: number): st
 # 四、叙事与交互格式
 - 始终用第二人称"你"叙述。
 - 每次回复的 narration 包含：场景描写 + 玩家行动结果 + 世界反应。
-- 单轮 narration 控制在 ${narrationMin}-${narrationMax} 字，不拖沓。
+- 单轮 narration 篇幅适中，内容完整不拖沓，不超过 ${narrationMax} 字。
 
 # 五、状态与记忆更新规则（写入 save 时严格遵守）
 - 每轮行动后，根据剧情变化更新对应条目。
@@ -127,15 +141,51 @@ export function buildGlobalRules(narrationMin: number, narrationMax: number): st
 }
 
 // ===== 输出格式约束 =====
-export function buildOutputFormat(narrationMin: number, narrationMax: number): string {
+export function buildOutputFormat(_narrationMin: number, narrationMax: number, usePatch = false): string {
+  if (usePatch) {
+    return `# 输出格式（强制）
+你必须且只能输出一个标准的 JSON 对象，不得包含任何 JSON 之外的文字、解释、前言后语或 Markdown 代码块标记（不要用 \`\`\` 包裹）。JSON 结构如下：
+
+{
+  "narration": "场景描写+玩家行动结果+世界反应（篇幅适中，不超过 ${narrationMax} 字，第二人称'你'）",
+  "options": ["参考选项1", "参考选项2", "参考选项3"],
+  "patchSave": { ...只列发生变化的字段，见下方说明... },
+  "loreUpdates": [
+    { "title": "条目标题", "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
+    { "title": "过期条目标题", "remove": true }
+  ]
+}
+
+${PATCH_SAVE_DESC}
+
+JSON 语法硬性要求（违反任一条都会导致解析失败）：
+- 所有键名必须用英文双引号包裹：如 "narration"、"options"、"patchSave"。
+- 所有字符串值必须用英文双引号包裹，不要使用单引号或中文引号。
+- 字符串内部的换行必须写成 \\n 转义序列，不要直接换行；正文中若出现英文双引号必须写成 \\"。
+- 键与值之间必须有冒号，元素与元素之间必须有逗号，最后一项后面不得有逗号。
+- 不要使用任何注释（//、/* */）。
+- 不要截断 JSON：宁可把 narration 写得短一些，也必须保证 JSON 完整闭合。
+- 不要输出多个 JSON 或把 JSON 包在别的文本里。
+
+注意：
+- options 必须生成 2-3 个自然、可执行的下一步行动方向，数组不能为空、缺失或长度 0（这是硬性要求，违反即不合格）；它们仅为参考建议，玩家可无视或自由输入，你必须始终按玩家的真实输入推进，选项不得变成"三条预设轨道"。
+- narration 是面向玩家展示的正文，严格遵循信息边界，不得出现任何隐藏信息。
+- patchSave 是存档修改指令，只列出本轮发生变化的字段；未列出的字段自动保持原样。须确保应改尽改，不得遗漏本轮剧情导致的变化。
+- loreUpdates 为可选字段：仅当本次剧情出现了值得长期记录的新设定（世界书尚未记载的新地点/人物/概念/事物，或需更新已有条目）时才返回；否则返回空数组 []。若世界书使用规则未提及 loreUpdates，则必须返回空数组。
+- loreUpdates 删除条目：返回 { "title": "条目标题", "remove": true } 可删除已过期/失效的条目（如已损毁物品、已离开且不再重逢的人物、已结束的任务等）；只需 title 匹配，其他字段可省略；fixed 条目不可删除。
+}`
+  }
   return `# 输出格式（强制）
 你必须且只能输出一个标准的 JSON 对象，不得包含任何 JSON 之外的文字、解释、前言后语或 Markdown 代码块标记（不要用 \`\`\` 包裹）。JSON 结构如下：
 
 {
-  "narration": "场景描写+玩家行动结果+世界反应（${narrationMin}-${narrationMax}字，第二人称'你'）",
+  "narration": "场景描写+玩家行动结果+世界反应（篇幅适中，不超过 ${narrationMax} 字，第二人称'你'）",
   "options": ["参考选项1", "参考选项2", "参考选项3"],
   "save": { ...下面"存档结构"定义的完整存档对象... },
-  "loreUpdates": [ { "title": "条目标题", "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] } ]
+  "loreUpdates": [
+    { "title": "条目标题", "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
+    { "title": "过期条目标题", "remove": true }
+  ]
 }
 
 JSON 语法硬性要求（违反任一条都会导致解析失败）：
@@ -152,6 +202,7 @@ JSON 语法硬性要求（违反任一条都会导致解析失败）：
 - narration 是面向玩家展示的正文，严格遵循信息边界，不得出现任何隐藏信息。
 - save 是更新后的完整存档，必须整体重写、严格按"存档结构"填写，不得增删字段、不得改动字段名。
 - loreUpdates 为可选字段：仅当本次剧情出现了值得长期记录的新设定（世界书尚未记载的新地点/人物/概念/事物，或需更新已有条目）时才返回；否则返回空数组 []。若世界书使用规则未提及 loreUpdates，则必须返回空数组。
+- loreUpdates 删除条目：返回 { "title": "条目标题", "remove": true } 可删除已过期/失效的条目（如已损毁物品、已离开且不再重逢的人物、已结束的任务等）；只需 title 匹配，其他字段可省略；fixed 条目不可删除。
 }`
 }
 
@@ -206,6 +257,7 @@ function panelSchemaToText(schema: PanelField[]): string {
 export function buildWorldGenPrompt(
   userInput: string,
   opts: { summarize?: boolean; expand?: boolean } = {},
+  worldSettingMax?: number,
 ): string {
   const enhanceLines: string[] = []
   if (!opts.summarize && !opts.expand) {
@@ -218,6 +270,7 @@ export function buildWorldGenPrompt(
     enhanceLines.push('- 请基于用户设定补充更多合理、自洽的世界细节（如地理环境、势力派系、规则制度、风土人情、历史背景等），让世界更丰富完整，但不得与用户已有设定相矛盾。')
   }
   const enhanceText = enhanceLines.length > 0 ? `\n${enhanceLines.join('\n')}` : ''
+  const wsm = worldSettingMax && worldSettingMax > 0 ? worldSettingMax : 3000
   return `你是文字冒险世界的设定设计师。用户希望创建一个新世界，下面是用户给出的内容：
 <用户输入>
 ${userInput}
@@ -226,8 +279,8 @@ ${userInput}
 用户的输入可能非常长。请把它整理成两份互补的材料：一份精简的「核心设定」供每轮常驻，一份「世界书条目」保存全部详细设定供按需注入，确保信息不丢失。
 
 请完成三件事：
-1. 提炼精简的「核心设定」（worldSetting）：包含世界观铁律、不可违背的规则、全局框架与叙事基调。控制在 1500~3000 字以内，去除冗余细节，只保留每轮必须牢记的硬约束与骨架。${enhanceText}
-2. 把完整、详细的设定拆分到一个一个「世界书条目」（lorebook）中：每个条目聚焦一个主题（某地点、组织、人物、物品、规则、种族、地域等），用 tags 标注其适用的场景与主题（如"山脉""都城""鹰族""禁咒"），并将 2~5 条最重要的全局规则标注 required:true（每轮必需，注意控制数量避免上下文过长）。详细内容必须完整保留在条目中，条目数量不限，总量可以很大。
+1. 提炼精简的「核心设定」（worldSetting）：包含世界观铁律、不可违背的规则、全局框架与叙事基调。精简凝练，不超过 ${wsm} 字，只保留每轮必须牢记的硬约束与骨架。若内容超出上限，须精简核心设定，将多余部分拆入世界书条目（可新建条目存放）。${enhanceText}
+2. 把完整、详细的设定拆分到一个一个「世界书条目」（lorebook）中：每个条目聚焦一个主题（某地点、组织、人物、物品、规则、种族、地域等），用 tags 标注其适用的场景与主题（如"山脉""都城""鹰族""禁咒"），并将最重要的全局规则标注 required:true（每轮必需，注意控制数量避免上下文过长）。详细内容必须完整保留在条目中，条目数量不限，总量可以很大。
    - 不会随剧情改变的底层设定（如世界物理法则、魔法体系根本规则、地理常识）应标注 fixed:true，防止后续剧情推进时被误改。
    - 当某条目在剧情中被引用时，若需要另一条目作为补充上下文（如"鹰族"条目需要"天空之城"条目），请在 links 中填入关联条目的标题（字符串数组），系统会在注入本条目时一并注入关联条目（仅展开一层）。
 3. 为这个世界设计「角色面板字段」清单（panelSchema）：冒险中需要持续追踪的角色状态（位置、时间、HP、状态、技能等），每字段给出英文 key、中文含义、类型（text/number）和可选单位。
@@ -247,18 +300,19 @@ export function bagDetailRule(enabled: boolean): string {
 
 # 物品精细描述要求（已开启）
 - 对 inventory.equipment 与 inventory.items 中的每一件物品，state 字段必须填写详细、具体的描述：包括材质、外观、磨损/品相、剩余数量（如适用）、来历或用途等，让玩家仅凭描述就能想象出这件物品。
-- 每件物品的 state 描述至少 15 字，避免"还好""完好""普通"这类笼统词。
+- 每件物品的 state 描述须具体，避免"还好""完好""普通"这类笼统词。
 - 新增或获得物品时务必给出精细描述；已有物品应根据使用痕迹与剧情进展持续更新、丰富其描述。`
 }
 
 // 根据"上下文文本"挑出本轮该注入的世界书条目并组装注入区文本；无世界书时返回空串
 // sceneValue：当前场景值（如 panel[sceneField]），tags 与场景值精确相等优先，其次双向包含
 // 上下文匹配：标签在上下文中出现的次数越多相关度越高（次数加权）
-export function buildLoreInjection(world: World, context: string, sceneValue?: string, activeNames?: string[]): string {
+export function buildLoreInjection(world: World, context: string, sceneValue?: string, activeNames?: string[], cfg?: LoreInjectionConfig): string {
   const entries = world.lorebook ?? []
   if (entries.length === 0) return ''
   const scene = (sceneValue ?? '').trim()
   const ctx = context || ''
+  const loreBudget = cfg?.loreBudget && cfg.loreBudget > 0 ? cfg.loreBudget : LORE_BUDGET
   const scored: Array<{ e: LoreEntry; rank: number }> = []
   for (const e of entries) {
     const content = (e.content ?? '').trim()
@@ -312,13 +366,13 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
     }
   }
   // 其余条目按相关度填充剩余预算（数量受世界书最大匹配条目数限制）
-  const loreLimit = Number.isFinite(world.loreLimit) && (world.loreLimit ?? 0) > 0 ? Math.floor(world.loreLimit ?? DEFAULT_LORE_LIMIT) : DEFAULT_LORE_LIMIT
+  const loreLimit = cfg?.loreLimit && cfg.loreLimit > 0 ? Math.floor(cfg.loreLimit) : DEFAULT_LORE_LIMIT
   for (const s of scored) {
     if (s.e.required) continue
     if (pickedIds.has(s.e.id)) continue
     if (picked.length >= loreLimit) break
     const size = s.e.content.length
-    if (used + size > LORE_BUDGET) continue
+    if (used + size > loreBudget) continue
     picked.push(s.e)
     pickedIds.add(s.e.id)
     used += size
@@ -329,7 +383,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
     const t = (e.title ?? '').trim()
     if (t) byTitle.set(t, e)
   }
-  const linkBudget = Math.min(2000, LORE_BUDGET) // 关联条目额外预算上限
+  const linkBudget = cfg?.linkBudget && cfg.linkBudget >= 0 ? Math.min(cfg.linkBudget, loreBudget) : Math.min(2000, loreBudget) // 关联条目额外预算上限
   let linkUsed = 0
   const basePicked = [...picked]
   for (const p of basePicked) {
@@ -373,6 +427,7 @@ ${lines.join('\n')}
 - 存档 activeLocations 维护：当前所在的地点排最前，正在前往的目的地次之；已离开且暂时不会返回的地点移出；将要前往或计划回去的地点保留或加入。activeCharacters 维护同理：本轮接触的人物排最前，越久未见的越靠后；已分别且暂时不会再见面的人物移出，将要见面或近期重逢的人物保留或加入。
 - 仅露一面、无后续影响的龙套路人不必记录为世界书条目——若玩家日后寻找一个世界书中不存在的人或地点，应如实呈现"找不到"，而非凭空捏造。
 - 若剧情中出现了值得长期记录的新概念、新地点、新人物或新事物（世界书尚未记载、且对后续剧情有持续影响），请通过输出格式中的 loreUpdates 字段返回新增或更新条目（保留必要的 title/tags/content/required/isLocation/isCharacter），不要记录琐碎、一次性或不重要的细节。
+- 删除过期/失效条目：当世界书条目对应的事物已彻底消失（如地点被毁灭、人物已死亡且不会再出现、任务已完结且无后续影响、物品已损毁且不可修复），通过 loreUpdates 返回 { "title": "条目标题", "remove": true } 删除该条目；只需 title 匹配即可，无需提供 content 等其他字段。注意：fixed 条目（底层设定）不可删除。
 - 当玩家时隔较久重返旧地点或重遇旧人物时，应先根据已流逝的时间（参考存档 worldTime 与剧情上下文）对该世界书条目做合理演化——地点可能兴衰变化、人物可能因独立日程而离开或改变，不会停在原地等待——再据此读取与呈现；演化结果同时通过 loreUpdates 更新到世界书。
 - 标注"隐藏·彩蛋"的条目是尚未出场的彩蛋角色/设定：不要主动让该角色出场，只在剧情自然发展遇到合理条件时（如旅途偶遇、城镇擦肩、任务交集）才让她出场；出场后通过 loreUpdates 更新该条目并移除 hidden 标记（在返回的条目中设 hidden 为 false 或省略），此后按普通世界书条目处理。
 - 标注"固定"的条目是不可更改的底层设定：不得通过 loreUpdates 修改或删除固定条目的 title/tags/content/fixed/links，可以在该条目描述的框架内展开剧情。
@@ -409,6 +464,7 @@ export function buildCharacterGenPrompt(
   narrationMax: number,
   opts: { summarize?: boolean; expand?: boolean } = {},
   hiddenPreset?: string,
+  loreCfg?: LoreInjectionConfig,
 ): string {
   const lines: string[] = []
   if (!opts.summarize && !opts.expand) {
@@ -425,9 +481,9 @@ export function buildCharacterGenPrompt(
   lines.push('- 初始存档其余字段（inventory、map、characters 等）只填入与角色描述/世界设定直接相符的内容，未提及的方面用中性默认值补充（如空背包、起始位置）。')
   lines.push('- 生成开场叙事（第一幕场景）+ 2-3 个可选行动方向，并生成完整初始存档。')
   lines.push('- 玩家在这次描述中可能引入新的初始设定（世界设定之外的补充）。若与后续剧情相关、值得长期保留，请通过输出格式中的 loreUpdates 更新世界书（新增或更新条目）；不要遗漏值得保留的设定，也不要记录琐碎、一次性细节。')
-  lines.push('- 若玩家描述过于单薄（缺少姓名、外形、出身、性格、动机等关键信息），第一轮不要直接展开剧情：在 narration 中友善地列出 2-4 项需要补充的信息（如"你还想给角色起个什么名字？""说说看，你为什么踏上这趟旅程？"），options 给出补充方向建议，同时生成初步存档（缺失处用中性默认值，characterProfile 记录已提供部分并标注待补充项）。玩家在下一轮输入补充后，再正式拉开序幕。')
+  lines.push('- 若玩家描述过于单薄（缺少姓名、外形、出身、性格、动机等关键信息），第一轮不要直接展开剧情：在 narration 中友善地列出需要补充的信息（如"你还想给角色起个什么名字？""说说看，你为什么踏上这趟旅程？"），options 给出补充方向建议，同时生成初步存档（缺失处用中性默认值，characterProfile 记录已提供部分并标注待补充项）。玩家在下一轮输入补充后，再正式拉开序幕。')
   const constraint = lines.join('\n')
-  const lorePart = buildLoreInjection(world, userInput)
+  const lorePart = buildLoreInjection(world, userInput, undefined, undefined, loreCfg)
   const fallbackPart = world.characterFallback && world.characterFallback.trim()
     ? `\n\n【角色来源兜底（仅本次创建角色时适用，不写入后续剧情）】\n${world.characterFallback.trim()}`
     : ''
@@ -501,6 +557,7 @@ export function buildActionPrompt(
   lastNarration?: string,
   narrativeSpeed?: NarrativeSpeed,
   rules?: AdventureRules,
+  loreCfg?: LoreInjectionConfig,
 ): string {
   const lastPart = lastNarration ? `【上一轮剧情供衔接参考】\n${lastNarration}\n\n` : ''
   const activeNames = [
@@ -524,13 +581,14 @@ export function buildActionPrompt(
     context,
     world.sceneField ? String(currentSave.panel[world.sceneField] ?? '') : undefined,
     activeNames,
+    loreCfg,
   )
   const speedPart = narrativeSpeedRule(narrativeSpeed ?? 'normal')
   const speedText = speedPart ? `\n\n${speedPart}` : ''
   const rulesPart = buildAdventureRulesPart(rules)
   return `${lorePart}
 
-${lastPart}【当前存档（已是最新状态，须据此推进剧情并在行动后更新）】
+${lastPart}【当前存档（已是最新状态，须据此推进剧情并输出存档变化）】
 ${stringifyCompact(currentSave)}
 
 # 角色开场判定
@@ -547,8 +605,9 @@ export function buildActionSystemPrompt(
   narrationMax: number,
   world?: World,
   detailedBag?: boolean,
+  usePatch = false,
 ): string {
-  let s = `${buildGlobalRules(narrationMin, narrationMax)}\n\n${buildOutputFormat(narrationMin, narrationMax)}\n\n${SAVE_SCHEMA_DESC}`
+  let s = `${buildGlobalRules(narrationMin, narrationMax)}\n\n${buildOutputFormat(narrationMin, narrationMax, usePatch)}\n\n${SAVE_SCHEMA_DESC}`
   if (detailedBag) {
     const r = bagDetailRule(true)
     if (r) s += `\n${r}`
@@ -566,6 +625,7 @@ function buildActionRecoveryBase(
   userInput: string,
   lastNarration: string | undefined,
   includeSave: boolean,
+  loreCfg?: LoreInjectionConfig,
 ): string {
   const activeNames = [
     ...(currentSave.activeLocations ?? []),
@@ -588,10 +648,11 @@ function buildActionRecoveryBase(
     context,
     world.sceneField ? String(currentSave.panel[world.sceneField] ?? '') : undefined,
     activeNames,
+    loreCfg,
   )
   const lastPart = lastNarration ? `【上一轮剧情供衔接参考】\n${lastNarration}\n\n` : ''
   const savePart = includeSave
-    ? `${lastPart}【当前存档（须据此推进剧情并更新）】\n${stringifyCompact(currentSave)}\n\n`
+    ? `${lastPart}【当前存档（须据此推进剧情并输出存档变化）】\n${stringifyCompact(currentSave)}\n\n`
     : lastPart
   return `${lorePart}\n\n${savePart}【玩家行动】\n${userInput}`
 }
@@ -602,40 +663,8 @@ const RECOVERY_JSON_RULE = `JSON 语法硬性要求（违反任一条都会解�
 - 不要单引号、中文引号、注释（//、/* */）、尾逗号。
 - 不要截断 JSON：宁可把 narration 写短，也必须保证 JSON 完整闭合，只输出一个 JSON 对象且不加任何其他文字。`
 
-// diff 模式：让 AI 输出"存档修改指令"而非完整存档，本地应用，最大限度减小输出体积
-export function buildActionRecoveryDiffPrompt(
-  world: World,
-  currentSave: SaveData,
-  userInput: string,
-  lastNarration: string | undefined,
-  narrativeSpeed: NarrativeSpeed | undefined,
-  rules?: AdventureRules,
-): string {
-  const speedPart = narrativeSpeed === 'fast' || narrativeSpeed === 'rapid'
-    ? `\n- 叙事推进速度${narrativeSpeed === 'rapid' ? '·极速' : '·快速'}：省略过程细节，直接推进主线关键节点。`
-    : ''
-  const rulesPart = buildAdventureRulesPart(rules)
-  return `上一次生成本轮行动的输出因过长被截断。现在用更精简的方式重新生成本轮结果，输出且只输出一个 JSON 对象：
-
-{
-  "narration": "本轮剧情推进的叙事（控制在 100-220 字以内，精简但完整）",
-  "options": ["参考选项1", "参考选项2", "参考选项3"],
-  "patchSave": { ...见下方 patchSave 格式说明，只列变化，不输出完整存档... },
-  "loreUpdates": [ { "title": "条目标题", "tags": ["标签"], "content": "正文", "required": false, "fixed": false, "links": ["关联条目标题"] } ]
-}
-
-patchSave 格式说明（关键：这是修改指令，不是完整存档！）：
-- panel：只列出值发生变化的面板键，如 { "hp": 75, "mood": "紧张" }；未列出的键保持原样。
-- characterProfile / experience / worldTime / overview（impression、ongoing、recentEvents、latestProgress）：需要整体替换时才提供，只替换列出的字段；无变化省略。
-- 数组字段 inventory.equipment / inventory.items / map / characters：无变化时整体省略；有增删或状态变化时必须提供完整新数组（AI 无法表达"仅删第几个"，所以数组必须整体给出）。
-- hidden：用 { "add": { "键": "值" }, "remove": ["键"] } 表达增量修改；无变化省略。
-
-${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true)}
-
-${RECOVERY_JSON_RULE}${speedPart}${rulesPart}`
-}
-
-// split 模式第 1 次：只生成叙事与选项
+// split 模式第 1 次：生成叙事 + 选项 + 存档 diff（patchSave）
+// 理由：存档已小，截断主因是世界书大量修改；将存档 diff 与世界书更新分到不同请求
 export function buildActionRecoverySplitNarrationPrompt(
   world: World,
   currentSave: SaveData,
@@ -643,6 +672,7 @@ export function buildActionRecoverySplitNarrationPrompt(
   lastNarration: string | undefined,
   narrativeSpeed: NarrativeSpeed | undefined,
   rules?: AdventureRules,
+  loreCfg?: LoreInjectionConfig,
 ): string {
   const speedPart = narrativeSpeed === 'fast' || narrativeSpeed === 'rapid'
     ? `\n- 叙事推进速度${narrativeSpeed === 'rapid' ? '·极速' : '·快速'}：省略过程细节，直接推进主线关键节点。`
@@ -650,34 +680,48 @@ export function buildActionRecoverySplitNarrationPrompt(
   const rulesPart = buildAdventureRulesPart(rules)
   return `上一轮输出因过长被截断，本轮拆成两次独立生成。这是第 1 次，你只输出一个 JSON 对象：
 {
-  "narration": "本轮剧情推进的叙事（控制在 100-220 字以内，精简但完整）",
-  "options": ["参考选项1", "参考选项2", "参考选项3"]
+  "narration": "本轮剧情推进的叙事（精简但完整）",
+  "options": ["参考选项1", "参考选项2", "参考选项3"],
+  "patchSave": { ...只列发生变化的字段，见下方说明... }
 }
-不要输出 save、patchSave 或 loreUpdates 字段。
+不要输出 loreUpdates 字段。
 
-${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true)}
+${PATCH_SAVE_DESC}
+
+${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true, loreCfg)}
 
 ${RECOVERY_JSON_RULE}${speedPart}${rulesPart}`
 }
 
-// split 模式第 2 次：基于第 1 次生成的叙事，只输出完整存档与世界书更新
+// split 模式第 2 次：基于第 1 次生成的叙事，只输出世界书更新（loreUpdates）
+// 支持删除过期/失效条目：在条目中设置 "remove": true
 export function buildActionRecoverySplitSavePrompt(
   world: World,
   currentSave: SaveData,
   narrationText: string,
   userInput: string,
+  loreCfg?: LoreInjectionConfig,
 ): string {
-  return `上一轮输出因过长被截断，本轮拆成两次独立生成。第 1 次已生成叙事，这是第 2 次，你只输出一个 JSON 对象：
+  return `上一轮输出因过长被截断，本轮拆成两次独立生成。第 1 次已生成叙事与存档变化，这是第 2 次，你只输出一个 JSON 对象：
 {
-  "save": { ...完整更新后的存档，结构必须严格符合标准的"存档结构"，一个字段都不能少... },
-  "loreUpdates": [ { "title": "条目标题", "tags": ["标签"], "content": "正文", "required": false, "fixed": false, "links": ["关联条目标题"] } ]
+  "loreUpdates": [
+    { "title": "条目标题", "tags": ["标签"], "content": "正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
+    { "title": "过期条目标题", "remove": true }
+  ]
 }
-不要输出 narration 或 options 字段。save 必须是完整存档（不是 patch）。
+不要输出 narration、options 或 patchSave 字段。
 
-【本轮实际发生的剧情（第 1 次生成结果，据此更新存档）】
+【loreUpdates 删除机制】
+- 新增/更新条目：按正常格式返回（title + tags + content + ...）
+- 删除过期/失效条目：返回 { "title": "条目标题", "remove": true }
+  - 适用场景：已损毁的物品、已离开的地点、数值归零的状态、已结束的任务等
+  - 删除条目只需 title 匹配，其他字段可省略
+  - 注意：fixed 条目（底层设定）不可删除
+
+【本轮实际发生的剧情（第 1 次生成结果，据此输出世界书变化）】
 ${narrationText}
 
-${buildActionRecoveryBase(world, currentSave, userInput, narrationText, true)}
+${buildActionRecoveryBase(world, currentSave, userInput, narrationText, false, loreCfg)}
 
 ${RECOVERY_JSON_RULE}`
 }
@@ -687,6 +731,7 @@ export function buildRewriteSyncPrompt(
   world: World,
   currentSave: SaveData,
   page: StoryPage,
+  loreCfg?: LoreInjectionConfig,
 ): string {
   const activeNames = [
     ...(currentSave.activeLocations ?? []),
@@ -709,12 +754,13 @@ export function buildRewriteSyncPrompt(
     context,
     world.sceneField ? String(currentSave.panel[world.sceneField] ?? '') : undefined,
     activeNames,
+    loreCfg,
   )
   return `${lorePart}
 
 【改写同步（高优先级指令，务必执行）】
 玩家手动改写了上一轮生成的叙事。请基于【改写后的叙事】检查当前存档与世界书，凡与改写内容存在矛盾、或改写引入的合理新情况尚未记录的地方，一律修正；以玩家改写版为唯一事实来源，不得试图恢复成改写前的说法。
-- 世界书：有需要同步的条目标题/内容变化时，通过 loreUpdates 返回更新（未变化则返回空数组 []）。
+- 世界书：有需要同步的条目标题/内容变化时，通过 loreUpdates 返回更新（未变化则返回空数组 []）；需删除过期条目时返回 { "title": "条目标题", "remove": true }。
 - 存档：仅返回需要修改的字段（patch 语义，未列出的字段保持原样；数组字段 inventory.equipment / inventory.items / map / characters 有变化时提供完整新数组，无变化省略；hidden 用 { "add": {...}, "remove": [...] } 表达增量）。
 - 若改写内容与既有设定冲突，以改写内容为准，并相应调整设定描述使其自洽；若改写内容不影响任何数据，save 返回空对象 {}，loreUpdates 返回 []。
 - 不要输出 narration 或 options 字段。
@@ -732,7 +778,7 @@ JSON 语法硬性要求：键名与字符串值一律用英文双引号；字符
 
 {
   "save": { ...仅列出需要修改的字段（patch 语义）... },
-  "loreUpdates": [ { "title": ..., "tags": [...], "content": ..., "required": false, "fixed": false, "links": [...] } ]
+  "loreUpdates": [ { "title": ..., "tags": [...], "content": ..., "required": false, "fixed": false, "links": [...] }, { "title": "过期条目", "remove": true } ]
 }`
 }
 // 选项补全：AI 未正常生成选项时，基于本页叙事补 3 个选项

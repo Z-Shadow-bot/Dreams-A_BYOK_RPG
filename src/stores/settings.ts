@@ -25,6 +25,11 @@ const EVENT_FREQUENCY_KEY = 'event_frequency'
 const DIFFICULTY_KEY = 'difficulty'
 const ALLOW_REWRITE_KEY = 'allow_rewrite'
 const OPTION_FALLBACK_KEY = 'option_fallback'
+const LORE_LIMIT_KEY = 'lore_limit'
+const LORE_BUDGET_KEY = 'lore_budget'
+const LINK_BUDGET_KEY = 'link_budget'
+const WORLD_SETTING_MAX_KEY = 'world_setting_max'
+const OPTION_COUNT_KEY = 'option_count'
 
 const DEFAULT_CONFIG: APIConfig = {
   baseUrl: '',
@@ -67,6 +72,11 @@ export const useSettingsStore = defineStore('settings', {
     difficulty: 'normal' as Difficulty, // 游戏难度：简单/正常/困难/噩梦，影响行动成功率与敌人强度
     allowRewrite: false, // 允许改写：开启后双击最新页面可编辑，行动前 AI 先同步改写内容
     optionFallback: 'generic' as OptionFallback, // AI 未正常生成选项时的兜底：generic 通用兜底选项 / regenerate 追加补全请求
+    loreLimit: 15, // 世界书最大匹配条目数（全局）
+    loreBudget: 4000, // 世界书注入字符预算上限
+    linkBudget: 2000, // 关联条目额外字符预算
+    worldSettingMax: 3000, // 核心设定字数上限
+    optionCount: 3, // 每轮选项数量上限
   }),
   actions: {
     async load() {
@@ -169,6 +179,36 @@ export const useSettingsStore = defineStore('settings', {
         this.optionFallback = o === 'regenerate' ? 'regenerate' : 'generic'
       } catch {
         this.optionFallback = 'generic'
+      }
+      try {
+        const ll = await getSetting<number>(LORE_LIMIT_KEY)
+        this.loreLimit = typeof ll === 'number' && ll >= 0 ? Math.round(ll) : 15
+      } catch {
+        this.loreLimit = 15
+      }
+      try {
+        const lb = await getSetting<number>(LORE_BUDGET_KEY)
+        this.loreBudget = typeof lb === 'number' && lb > 0 ? Math.round(lb) : 4000
+      } catch {
+        this.loreBudget = 4000
+      }
+      try {
+        const lb2 = await getSetting<number>(LINK_BUDGET_KEY)
+        this.linkBudget = typeof lb2 === 'number' && lb2 >= 0 ? Math.round(lb2) : 2000
+      } catch {
+        this.linkBudget = 2000
+      }
+      try {
+        const wsm = await getSetting<number>(WORLD_SETTING_MAX_KEY)
+        this.worldSettingMax = typeof wsm === 'number' && wsm > 0 ? Math.round(wsm) : 3000
+      } catch {
+        this.worldSettingMax = 3000
+      }
+      try {
+        const oc = await getSetting<number>(OPTION_COUNT_KEY)
+        this.optionCount = typeof oc === 'number' && oc >= 0 ? Math.round(oc) : 3
+      } catch {
+        this.optionCount = 3
       }
       this.loaded = true
     },
@@ -332,6 +372,31 @@ export const useSettingsStore = defineStore('settings', {
       } catch {
         // 保存失败不阻塞设置生效
       }
+    },
+    async setLoreLimit(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 15
+      this.loreLimit = n
+      try { await putSetting(LORE_LIMIT_KEY, n) } catch { /* ignore */ }
+    },
+    async setLoreBudget(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v > 0 ? Math.round(v) : 4000
+      this.loreBudget = n
+      try { await putSetting(LORE_BUDGET_KEY, n) } catch { /* ignore */ }
+    },
+    async setLinkBudget(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 2000
+      this.linkBudget = n
+      try { await putSetting(LINK_BUDGET_KEY, n) } catch { /* ignore */ }
+    },
+    async setWorldSettingMax(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v > 0 ? Math.round(v) : 3000
+      this.worldSettingMax = n
+      try { await putSetting(WORLD_SETTING_MAX_KEY, n) } catch { /* ignore */ }
+    },
+    async setOptionCount(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 3
+      this.optionCount = n
+      try { await putSetting(OPTION_COUNT_KEY, n) } catch { /* ignore */ }
     },
   },
 })

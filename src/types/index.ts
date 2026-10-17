@@ -68,6 +68,7 @@ export interface LoreEntry {
   hidden?: boolean // 隐藏条目（彩蛋NPC等，状态页世界书概览不显示；角色出场后通过 loreUpdates 移除此标记）
   isLocation?: boolean // 地点条目（AI 自动打上，不显示为标签，不需要玩家编辑；状态页"地图"从此类条目读取）
   isCharacter?: boolean // 人物条目（AI 自动打上，不显示为标签，不需要玩家编辑；状态页"人物"从此类条目读取）
+  remove?: boolean // 删除标记（仅用于 loreUpdates 输出：AI 返回 { title, remove: true } 表示删除该条目；不持久化）
 }
 
 // ===== 世界原始快照（创建世界时保存：供"重新开始冒险"重置设定、"复制世界"生成副本使用） =====

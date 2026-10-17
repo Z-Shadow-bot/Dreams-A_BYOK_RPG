@@ -64,30 +64,6 @@ function onNarrativeDetailInput(e: Event) {
   void settings.setNarrativeDetail(narrativeDetailOrder[i] ?? 'normal')
 }
 
-// 世界书最大匹配条目数（跟世界走，0/空表示默认 12）
-const loreLimitText = ref('')
-watch(
-  () => worldStore.currentWorld?.loreLimit,
-  (v) => {
-    loreLimitText.value = v != null && v > 0 ? String(v) : ''
-  },
-  { immediate: true },
-)
-async function onLoreLimitInput(e: Event) {
-  const raw = (e.target as HTMLInputElement).value.trim()
-  const w = worldStore.currentWorld
-  if (!w) return
-  loreLimitText.value = raw
-  if (!raw) {
-    await worldStore.updateWorld(w.id, { loreLimit: 0 })
-    return
-  }
-  const n = Number(raw)
-  if (!Number.isFinite(n)) return
-  const v = Math.max(1, Math.floor(n))
-  if (v !== n) loreLimitText.value = String(v)
-  await worldStore.updateWorld(w.id, { loreLimit: v })
-}
 
 
 // 允许改写：双击最新页内容可编辑，行动前 AI 先同步改写内容
@@ -433,17 +409,7 @@ async function rollback() {
               <span class="difficulty-value">{{ difficultyLabels[difficultyIndex] }}</span>
             </div>
             <label class="setting-row">
-              <span class="setting-label">世界书最大匹配条目数</span>
-              <input
-                type="number"
-                class="lore-limit-input"
-                min="1"
-                placeholder="默认 15"
-                :value="loreLimitText"
-                @input="onLoreLimitInput"
-              />
-            </label>
-            <label class="setting-row">
+
               <span class="setting-label">允许改写</span>
               <input
                 type="checkbox"
@@ -793,16 +759,7 @@ async function rollback() {
   margin-bottom: 4px;
   line-height: 1.5;
 }
-.lore-limit-input {
-  flex: 1;
-  min-width: 0;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 14px;
-  color: var(--text);
-}
+
 .option {
   text-align: left;
   background: var(--surface);
