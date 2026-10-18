@@ -226,11 +226,11 @@ export function mergeSave(base: SaveData, raw: unknown, panelSchema: PanelField[
 }
 
 // 归一化单条世界书条目（AI 返回无 id，由这里分配）
-// 支持 remove 标记：AI 返回 { title, remove: true } 表示删除该条目（无需 content）
+// remove 标记：仅当条目完全重复或记录错误时 AI 返回 { title, remove: true } 表示删除该条目（无需 content）
 function normalizeLoreEntry(v: unknown): LoreEntry | null {
   const e = (v ?? {}) as Record<string, unknown>
   const title = asString(e.title).trim()
-  // 删除条目：只需 title + remove 标记，不需要 content
+  // 删除条目：仅完全重复或记录错误时使用，只需 title + remove 标记，不需要 content
   if (e.remove === true && title) {
     return {
       id: createId(),
@@ -243,9 +243,11 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
   const content = asString(e.content).trim()
   if (!content) return null
   const tags = asStringArray(e.tags).map((t) => t.trim()).filter((t) => !!t)
+  const aliases = asStringArray(e.aliases).map((t) => t.trim()).filter((t) => !!t)
   return {
     id: createId(),
     title: title || undefined,
+    aliases: aliases.length > 0 ? aliases : undefined,
     tags,
     content,
     required: !!e.required,

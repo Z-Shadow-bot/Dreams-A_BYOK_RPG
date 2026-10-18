@@ -35,6 +35,7 @@ const editError = ref('')
 interface LoreEditRow {
   id: string
   title: string
+  aliasesText: string
   tagsText: string
   content: string
   required: boolean
@@ -171,6 +172,7 @@ function openEdit(w: World) {
   editLorebook.value = (w.lorebook ?? []).map((e) => ({
     id: e.id,
     title: e.title ?? '',
+    aliasesText: (e.aliases ?? []).join(', '),
     tagsText: (e.tags ?? []).join(', '),
     content: e.content ?? '',
     required: !!e.required,
@@ -197,7 +199,7 @@ function removeField(i: number) {
 }
 
 function addLoreEntry() {
-  editLorebook.value.push({ id: createId(), title: '', tagsText: '', content: '', required: false, linksText: '' })
+  editLorebook.value.push({ id: createId(), title: '', aliasesText: '', tagsText: '', content: '', required: false, linksText: '' })
 }
 
 function removeLoreEntry(id: string) {
@@ -269,9 +271,14 @@ async function saveEdit() {
       .split(/[,，]/)
       .map((t) => t.trim())
       .filter((t) => !!t)
+    const aliases = r.aliasesText
+      .split(/[,，]/)
+      .map((t) => t.trim())
+      .filter((t) => !!t)
     lorebook.push({
       id: r.id,
       title: r.title.trim() || undefined,
+      aliases: aliases.length > 0 ? aliases : undefined,
       tags,
       content,
       required: r.required,
@@ -575,6 +582,7 @@ async function doImportDlc() {
                   {{ confirmLoreDeleteId === entry.id ? '确认删除？' : '✕' }}
                 </button>
               </div>
+              <input v-model="entry.aliasesText" class="input lore-tags" placeholder="别名/曾用称呼（逗号分隔，如：神秘人, 旧称）" />
               <input v-model="entry.tagsText" class="input lore-tags" placeholder="标签（逗号分隔，如：山脉, 鹰族, 边境）" />
               <input v-model="entry.linksText" class="input lore-tags" placeholder="关联条目（逗号分隔的条目标题，注入时一并带入）" />
               <textarea v-model="entry.content" class="textarea" rows="4" placeholder="条目详细设定内容" />

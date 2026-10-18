@@ -1,3 +1,9 @@
+<script lang="ts">
+// 模块级滚动位置：切换路由会销毁并重建 AdventureView，实例级变量会随之丢失，
+// 因此必须放在模块作用域，才能在「切走→切回」时保留原位。
+let savedAdventureScroll = 0
+</script>
+
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount, onUnmounted, nextTick } from 'vue'
 import { useAdventureStore } from '@/stores/adventure'
@@ -99,8 +105,7 @@ const isLatest = computed(
 )
 
 const readerBody = ref<HTMLElement | null>(null)
-// 模块级滚动位置：切换页面（如去看状态/世界书）再返回时保留原位置；仅翻页/生成新页才回顶部
-let savedAdventureScroll = 0
+// 切换页面（如去看状态/世界书）再返回时保留原位置；仅翻页/生成新页才回顶部
 let suppressScrollReset = true
 function getScroller(): Element | null {
   return readerBody.value?.closest('.app-main') ?? document.scrollingElement
@@ -400,7 +405,7 @@ async function rollback() {
               建议选择较大的允许模型输出的文本长度
             </div>
             <div class="setting-row">
-              <span class="setting-label">游戏难度</span>
+              <span class="setting-label">游戏难度调整</span>
               <input
                 type="range"
                 class="difficulty-range"

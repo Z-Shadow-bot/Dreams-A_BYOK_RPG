@@ -52,8 +52,21 @@ function clearPendingRequest(): void {
   try { localStorage.removeItem(PENDING_KEY); console.log('[pending] clear') } catch { /* ignore */ }
 }
 
-// 将 AI 返回的世界书更新合并进现有世界书：按 title 匹配更新，否则新增
-// 支持 remove 标记：AI 返回 { title, remove: true } 时删除对应条目
+// 归一化的比对键：去空格并统一大小写，用于 title/aliases 匹配
+function loreKey(s: string | undefined): string {
+  return (s ?? '').trim().toLowerCase()
+}
+
+// 判断更新项（title + aliases）是否指向已有条目 b（title 或 aliases 任一命中即为同一实体）
+function loreMatches(b: LoreEntry, title: string, aliases: string[]): boolean {
+  const incoming = [title, ...aliases].map(loreKey).filter((k) => !!k)
+  if (incoming.length === 0) return false
+  const targets = [b.title ?? '', ...(b.aliases ?? [])].map(loreKey).filter((k) => !!k)
+  return incoming.some((k) => targets.includes(k))
+}
+
+// 将 AI 返回的世界书更新合并进现有世界书：按 title/aliases 匹配更新（含同义不同名合并），否则新增
+// remove 标记：仅当条目完全重复或记录错误时 AI 返回 { title, remove: true }，删除对应条目
 // 仅当世界已拥有 lorebook 字段时才合并（避免旧世界被意外创建世界书）
 function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreEntry[] | null {
   if (!updates || updates.length === 0) return null
@@ -61,8 +74,10 @@ function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreE
   const book: LoreEntry[] = world.lorebook.map((e) => ({ ...e }))
   for (const u of updates) {
     const title = (u.title ?? '').trim()
-    const idx = title ? book.findIndex((b) => (b.title ?? '').trim() === title) : -1
-    // 删除条目：按 title 匹配删除（fixed 条目不可删除）
+    const aliases = (u.aliases ?? []).map((a) => a.trim()).filter((a) => !!a)
+    // 按 title/aliases 双向匹配定位已有条目（同义不同名视为同一条）
+    const idx = title || aliases.length > 0 ? book.findIndex((b) => loreMatches(b, title, aliases)) : -1
+    // 删除条目：按 title/aliases 匹配删除（fixed 条目不可删除）
     if (u.remove === true) {
       if (idx >= 0 && !book[idx].fixed) {
         book.splice(idx, 1)
@@ -70,16 +85,42 @@ function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreE
       continue
     }
     if (idx >= 0) {
+      const old = book[idx]
       // 固定条目：AI 不得修改内容/tags/title/fixed/links，仅允许移除 hidden（彩蛋出场）
-      if (book[idx].fixed) {
+      if (old.fixed) {
         if (u.hidden === false || u.hidden === undefined) {
-          book[idx] = { ...book[idx], hidden: undefined }
+          book[idx] = { ...old, hidden: undefined }
         }
         continue
       }
-      book[idx] = { ...book[idx], title: u.title, tags: u.tags, content: u.content, required: u.required, fixed: u.fixed, links: u.links, hidden: u.hidden, isLocation: u.isLocation, isCharacter: u.isCharacter }
+      const newTitle = title || old.title
+      // 合并别名：保留旧别名；改名时把旧标题转为别名；并入本次新别名
+      const mergedAliases = new Set<string>()
+      for (const a of old.aliases ?? []) mergedAliases.add(a)
+      for (const a of aliases) mergedAliases.add(a)
+      if ((old.title ?? '').trim() && loreKey(old.title) !== loreKey(newTitle)) {
+        mergedAliases.add((old.title ?? '').trim())
+      }
+      // 去掉与当前标题重复的别名
+      const titleKey = loreKey(newTitle)
+      for (const a of [...mergedAliases]) {
+        if (loreKey(a) === titleKey) mergedAliases.delete(a)
+      }
+      book[idx] = {
+        ...old,
+        title: newTitle,
+        aliases: mergedAliases.size > 0 ? [...mergedAliases] : undefined,
+        tags: u.tags,
+        content: u.content,
+        required: u.required,
+        fixed: u.fixed,
+        links: u.links,
+        hidden: u.hidden,
+        isLocation: u.isLocation,
+        isCharacter: u.isCharacter,
+      }
     } else {
-      book.push({ ...u, remove: undefined })
+      book.push({ ...u, remove: undefined, aliases: aliases.length > 0 ? aliases : undefined })
     }
   }
   return book
