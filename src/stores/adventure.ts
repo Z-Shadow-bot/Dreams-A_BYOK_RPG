@@ -126,6 +126,41 @@ function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreE
   return book
 }
 
+// 用世界书的 title/aliases 校正存档中的 active 名称：
+// 条目改名后，存档 activeLocations/activeCharacters 可能仍以旧称呼（现已成为该条目的别名）出现，
+// 这里将其替换为条目的当前标题，避免状态页按 title 匹配/排序失效。
+function syncActiveNamesWithLorebook(save: SaveData | null, lorebook: LoreEntry[] | null | undefined): void {
+  if (!save || !Array.isArray(lorebook)) return
+  const titleKeys = new Set<string>()
+  for (const e of lorebook) {
+    const t = (e.title ?? '').trim()
+    if (t) titleKeys.add(loreKey(t))
+  }
+  const aliasToTitle = new Map<string, string>()
+  for (const e of lorebook) {
+    const t = (e.title ?? '').trim()
+    if (!t) continue
+    const tKey = loreKey(t)
+    for (const a of e.aliases ?? []) {
+      const aKey = loreKey(a)
+      // 跳过空值、与标题同名的别名，以及本身已是其它条目正式标题的别名
+      if (!aKey || aKey === tKey || titleKeys.has(aKey)) continue
+      aliasToTitle.set(aKey, t)
+    }
+  }
+  if (aliasToTitle.size === 0) return
+  const fix = (arr?: string[]) => {
+    if (!Array.isArray(arr)) return
+    for (let i = 0; i < arr.length; i++) {
+      const cur = (arr[i] ?? '').trim()
+      const mapped = aliasToTitle.get(loreKey(cur))
+      if (mapped && cur !== mapped) arr[i] = mapped
+    }
+  }
+  fix(save.activeLocations)
+  fix(save.activeCharacters)
+}
+
 export const useAdventureStore = defineStore('adventure', {
   state: () => ({
     worldId: null as string | null,
@@ -193,6 +228,8 @@ export const useAdventureStore = defineStore('adventure', {
       if (this.worldId !== worldId) return
       if (state && state.currentSave) {
         this.currentSave = state.currentSave
+        // 兜底：读档时若存档早于条目改名，用当前世界书校正 active 中的旧称呼
+        syncActiveNamesWithLorebook(this.currentSave, useWorldStore().currentWorld?.lorebook)
         this.currentIndex = state.currentIndex
       }
       this.pages = pages
@@ -306,6 +343,7 @@ export const useAdventureStore = defineStore('adventure', {
         await putPage(page)
         if (this.worldId !== worldId) return
         this.currentSave = result.save
+        syncActiveNamesWithLorebook(this.currentSave, merged ?? freshWorld.lorebook)
         this.pages = [page]
         this.currentIndex = 0
         await this.persistState()
@@ -356,6 +394,7 @@ export const useAdventureStore = defineStore('adventure', {
             if (this.worldId !== worldId) return
             this.currentSave = sync.save
             const syncedMerged = mergeLoreUpdates(world, sync.loreUpdates)
+            syncActiveNamesWithLorebook(this.currentSave, syncedMerged ?? world.lorebook)
             if (syncedMerged) {
               await useWorldStore().updateWorld(worldId, { lorebook: syncedMerged })
             }
@@ -419,6 +458,7 @@ export const useAdventureStore = defineStore('adventure', {
 
         this.pages.push(page)
         this.currentSave = result.save
+        syncActiveNamesWithLorebook(this.currentSave, merged ?? world.lorebook)
         this.currentIndex = page.index
         await this.persistState()
         await this.autoSaveIfDue(page.index + 1)
@@ -576,6 +616,7 @@ export const useAdventureStore = defineStore('adventure', {
       const world = useWorldStore().currentWorld
       if (!world || !this.currentSave) return
       this.currentSave = normalizeSave(this.currentSave, world.panelSchema)
+      syncActiveNamesWithLorebook(this.currentSave, world.lorebook)
       try {
         await this.persistState()
       } catch {
