@@ -60,6 +60,36 @@ function normalizeItem(v: unknown): Item {
   }
 }
 
+// 按物品名增量合并物品列表：AI 只需列出本轮新增或发生变化的物品，未列出的保留原样；
+// 物品对象带 remove: true 表示删除该名称的物品（不持久化）。
+// 这样即使模型漏输出部分物品，也不会把背包清空。
+function mergeItems(baseList: Item[], incoming: unknown): Item[] {
+  if (!Array.isArray(incoming)) return baseList.map((it) => ({ ...it }))
+  const out: Item[] = baseList.map((it) => ({ ...it }))
+  for (const raw of incoming) {
+    const it = (raw ?? {}) as Record<string, unknown>
+    const name = asString(it.name).trim()
+    if (!name) continue
+    const idx = out.findIndex((x) => (x.name ?? '').trim() === name)
+    if (it.remove === true) {
+      if (idx >= 0) out.splice(idx, 1)
+      continue
+    }
+    if (idx >= 0) {
+      // 更新：只覆盖 AI 明确提供的字段，未提供的保留原值
+      const old = out[idx]
+      out[idx] = {
+        name: old.name,
+        quantity: typeof it.quantity === 'number' ? it.quantity : old.quantity,
+        state: typeof it.state === 'string' && it.state.trim() !== '' ? it.state : old.state,
+      }
+    } else {
+      out.push(normalizeItem(it))
+    }
+  }
+  return out
+}
+
 function normalizeLocation(v: unknown): MapLocation {
   const loc = (v ?? {}) as Record<string, unknown>
   return {
@@ -164,8 +194,8 @@ export function mergeSave(base: SaveData, raw: unknown, panelSchema: PanelField[
   // 数组字段：AI 明确返回数组才整体替换（缺失 = 未更新；空数组 = 明确清空）
   if (r.inventory && typeof r.inventory === 'object' && !Array.isArray(r.inventory)) {
     const inv = r.inventory as Record<string, unknown>
-    if (Array.isArray(inv.equipment)) out.inventory.equipment = inv.equipment.map(normalizeItem)
-    if (Array.isArray(inv.items)) out.inventory.items = inv.items.map(normalizeItem)
+    if (Array.isArray(inv.equipment)) out.inventory.equipment = mergeItems(out.inventory.equipment, inv.equipment)
+    if (Array.isArray(inv.items)) out.inventory.items = mergeItems(out.inventory.items, inv.items)
   }
   if (Array.isArray(r.map)) out.map = r.map.map(normalizeLocation)
   if (Array.isArray(r.characters)) out.characters = r.characters.map(normalizeCharacter)
@@ -428,8 +458,8 @@ export function applySavePatch(base: SaveData, patch: unknown): SaveData {
   }
   if (p.inventory && typeof p.inventory === 'object' && !Array.isArray(p.inventory)) {
     const inv = p.inventory as Record<string, unknown>
-    if (Array.isArray(inv.equipment)) out.inventory.equipment = inv.equipment.map(normalizeItem)
-    if (Array.isArray(inv.items)) out.inventory.items = inv.items.map(normalizeItem)
+    if (Array.isArray(inv.equipment)) out.inventory.equipment = mergeItems(out.inventory.equipment, inv.equipment)
+    if (Array.isArray(inv.items)) out.inventory.items = mergeItems(out.inventory.items, inv.items)
   }
   if (Array.isArray(p.map)) out.map = p.map.map(normalizeLocation)
   if (Array.isArray(p.characters)) out.characters = p.characters.map(normalizeCharacter)

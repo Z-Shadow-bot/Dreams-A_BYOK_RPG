@@ -17,7 +17,8 @@ export interface LoreInjectionConfig {
 const PATCH_SAVE_DESC = `patchSave 格式说明（关键：这是修改指令，不是完整存档！只列变化，不输出完整存档）：
 - panel：只列出值发生变化的面板键，如 { "hp": 75, "mood": "紧张" }；未列出的键保持原样。
 - characterProfile / experience / worldTime / overview（impression、ongoing、recentEvents、latestProgress）：需要整体替换时才提供，只替换列出的字段；无变化省略。
-- 数组字段 inventory.equipment / inventory.items / map / characters：无变化时整体省略；有增删或状态变化时必须提供完整新数组。
+- inventory（背包）：按物品名增量更新，只列出本轮新增或发生变化的物品（新增的物品提供完整字段；修改的物品至少提供 name + 变化的字段，未提供的字段保留原值）；未列出的物品一律保留原状，切勿整体重发背包。删除物品时在该物品对象里加 "remove": true（只需 name），如 { "name": "用完的绷带", "remove": true }。equipment 与 items 分开维护；物品在两者间移动时，在源列表 remove、在目标列表新增。注意：空数组 [] 表示"无变化"（不是清空背包）。
+- map / characters 字段已废弃，始终省略。
 - hidden：用 { "add": { "键": "值" }, "remove": ["键"] } 表达增量修改；无变化省略。`
 
 // ===== 冒险设置规则（高优先级指令，生成"行动"时随本轮注入） =====
@@ -128,7 +129,7 @@ export function buildGlobalRules(_narrationMin: number, narrationMax: number): s
 
 # 五、状态与记忆更新规则（写入 save 时严格遵守）
 - 每轮行动后，根据剧情变化更新对应条目。
-- 存档内的物品/状态：已过期、已损毁、数值归零的立即移除，不留占位符（如用完的绷带、痊愈的伤口、丢失的武器）。（此规则仅针对存档 inventory 中的临时物品与状态；世界书条目另按"世界书使用规则"处理，已消失的事物须保留并标注终态，不得删除。）
+- 存档内的物品/状态：已过期、已损毁、数值归零的，从 inventory 中移除（在返回的物品对象中标记 "remove": true，如用完的绷带、丢失的武器），不留占位符。（此规则仅针对存档 inventory 中的临时物品与状态；世界书条目另按"世界书使用规则"处理，已消失的事物须保留并标注终态，不得删除。）
 - 新获得的物品、状态、关系及时添加。
 - 状态描述随剧情推进改写（如"轻伤"→"伤愈留疤"→直接删除）。
 - 不再产生影响的持续状态直接删除。
@@ -237,7 +238,7 @@ export const SAVE_SCHEMA_DESC = `# 存档结构（save 字段的严格定义）
 - activeLocations：当前正在交互的地点、正在前往的目的地名称列表。已离开且暂时不会返回的地点须移出；将要前往或计划回去的地点须保留或加入。对应名称的世界书条目会被强制注入上下文。
 - activeCharacters：当前正在交互的人物、即将见面或近期会重逢的人物名称列表。已分别且暂时不会再见面的人物须移出；将要见面或计划重逢的人物须保留或加入。对应名称的世界书条目会被强制注入上下文。
 - panel 的键名必须与"角色面板字段"清单中的英文 key 完全一致，不得用中文标签替代，不得增删键。
-- inventory.equipment（装备）与 inventory.items（普通物品）必须分开放置，不得混在一起。
+- inventory 按物品名增量更新：只列新增/变化的物品，未列出的保留原状（删除用 "remove": true）；切勿因整体重发而遗漏物品。inventory.equipment（装备）与 inventory.items（普通物品）必须分开放置，不得混在一起。
 - characterProfile 与 experience 必须分开维护：characterProfile 记录稳定的人设背景，experience 记录随剧情演进的经历；两者不得互相混写、互相覆盖。更新存档时，除非剧情出现重大转折，否则 characterProfile 应保持原样，将变化写进 experience。
 - overview 四栏必须与存档其他部分保持一致，体现最新状态。
 - hidden 专用于幕后信息：不在状态栏显示，但作为后续剧情生成的参考；当玩家从角色视角可以得知该内容时，将它从 hidden 移除，改写进对应的可见字段。
@@ -772,7 +773,7 @@ export function buildRewriteSyncPrompt(
 【改写同步（高优先级指令，务必执行）】
 玩家手动改写了上一轮生成的叙事。请基于【改写后的叙事】检查当前存档与世界书，凡与改写内容存在矛盾、或改写引入的合理新情况尚未记录的地方，一律修正；以玩家改写版为唯一事实来源，不得试图恢复成改写前的说法。
 - 世界书：有需要同步的条目标题/内容变化时，通过 loreUpdates 返回更新（未变化则返回空数组 []）。事物死亡/摧毁/损毁/完结时，保留条目并把 content 改写为终态（开头加"【已死亡】"等前缀），切勿删除；仅当条目完全重复或记录错误时才返回 { "title": "条目标题", "remove": true }。
-- 存档：仅返回需要修改的字段（patch 语义，未列出的字段保持原样；数组字段 inventory.equipment / inventory.items / map / characters 有变化时提供完整新数组，无变化省略；hidden 用 { "add": {...}, "remove": [...] } 表达增量）。
+- 存档：仅返回需要修改的字段（patch 语义，未列出的字段保持原样；inventory 按物品名增量更新——只列新增/变化的物品，未列出的保留，删除用 "remove": true；map / characters 已废弃始终省略；hidden 用 { "add": {...}, "remove": [...] } 表达增量）。
 - 若改写内容与既有设定冲突，以改写内容为准，并相应调整设定描述使其自洽；若改写内容不影响任何数据，save 返回空对象 {}，loreUpdates 返回 []。
 - 不要输出 narration 或 options 字段。
 

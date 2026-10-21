@@ -11,6 +11,7 @@ export interface Item {
   name: string
   quantity?: number
   state?: string // 物品状态描述
+  remove?: boolean // 删除标记（仅用于 AI 输出：在物品对象中设 remove:true 表示从背包删除该名称物品；不持久化）
 }
 
 export interface InventoryData {
