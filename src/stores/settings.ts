@@ -272,9 +272,9 @@ export const useSettingsStore = defineStore('settings', {
       }
       await removeProfileKey(id)
     },
-    async switchApiProfile(id: string) {
+    async switchApiProfile(id: string): Promise<string> {
       const p = this.apiProfiles.find((x) => x.id === id)
-      if (!p) return
+      if (!p) return ''
       await this.saveConfig({
         baseUrl: p.baseUrl,
         model: p.model,
@@ -291,6 +291,7 @@ export const useSettingsStore = defineStore('settings', {
         // 该 profile 未保存过 API Key：清空当前 Key，避免残留上一个 profile 的 Key 请求本配置导致鉴权错误
         await this.clearApiKey()
       }
+      return key ?? ''
     },
     async setDevMode(v: boolean) {
       this.devMode = v

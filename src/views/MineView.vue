@@ -84,7 +84,7 @@ const activeProfileId = computed(
 )
 
 async function switchProfile(id: string) {
-  await settings.switchApiProfile(id)
+  const key = await settings.switchApiProfile(id)
   form.baseUrl = settings.config.baseUrl
   form.model = settings.config.model
   form.extraHeadersText = JSON.stringify(settings.config.extraHeaders ?? {}, null, 2)
@@ -92,6 +92,7 @@ async function switchProfile(id: string) {
   form.maxWaitTime = settings.config.maxWaitTime ?? 180
   form.narrationMin = settings.config.narrationMin ?? 200
   form.narrationMax = settings.config.narrationMax ?? 500
+  apiKey.value = key
   saved.value = true
   setTimeout(() => (saved.value = false), 2000)
 }
