@@ -202,20 +202,20 @@ export function mergeSave(base: SaveData, raw: unknown, panelSchema: PanelField[
   if (Array.isArray(r.activeLocations)) out.activeLocations = asStringArray(r.activeLocations)
   if (Array.isArray(r.activeCharacters)) out.activeCharacters = asStringArray(r.activeCharacters)
 
-  // 字符串字段：AI 返回字符串才覆盖（空字符串 = 明确清空；缺失 = 未更新）
-  if (typeof r.characterProfile === 'string') out.characterProfile = r.characterProfile
-  if (typeof r.experience === 'string') out.experience = r.experience
-  if (typeof r.worldTime === 'string') out.worldTime = r.worldTime
+  // 成段文本字段：AI 返回非空字符串才覆盖（空字符串与缺失都视为未更新，避免误清空设定/经历/概览/时间）
+  if (typeof r.characterProfile === 'string' && r.characterProfile.trim() !== '') out.characterProfile = r.characterProfile
+  if (typeof r.experience === 'string' && r.experience.trim() !== '') out.experience = r.experience
+  if (typeof r.worldTime === 'string' && r.worldTime.trim() !== '') out.worldTime = r.worldTime
 
   // 概览：逐项合并
   if (r.overview && typeof r.overview === 'object' && !Array.isArray(r.overview)) {
     const o = r.overview as Record<string, unknown>
-    if (typeof o.impression === 'string') out.overview.impression = o.impression
-    if (typeof o.ongoing === 'string') out.overview.ongoing = o.ongoing
+    if (typeof o.impression === 'string' && o.impression.trim() !== '') out.overview.impression = o.impression
+    if (typeof o.ongoing === 'string' && o.ongoing.trim() !== '') out.overview.ongoing = o.ongoing
     if (Array.isArray(o.recentEvents)) {
       out.overview.recentEvents = o.recentEvents.filter((x): x is string => typeof x === 'string')
     }
-    if (typeof o.latestProgress === 'string') out.overview.latestProgress = o.latestProgress
+    if (typeof o.latestProgress === 'string' && o.latestProgress.trim() !== '') out.overview.latestProgress = o.latestProgress
   }
 
   // 隐藏记录：AI 返回对象才应用（支持 add/remove 指令或整体对象）
@@ -444,17 +444,17 @@ export function applySavePatch(base: SaveData, patch: unknown): SaveData {
       }
     }
   }
-  if (typeof p.characterProfile === 'string') out.characterProfile = p.characterProfile
-  if (typeof p.experience === 'string') out.experience = p.experience
-  if (typeof p.worldTime === 'string') out.worldTime = p.worldTime
+  if (typeof p.characterProfile === 'string' && p.characterProfile.trim() !== '') out.characterProfile = p.characterProfile
+  if (typeof p.experience === 'string' && p.experience.trim() !== '') out.experience = p.experience
+  if (typeof p.worldTime === 'string' && p.worldTime.trim() !== '') out.worldTime = p.worldTime
   if (p.overview && typeof p.overview === 'object' && !Array.isArray(p.overview)) {
     const o = p.overview as Record<string, unknown>
-    if (typeof o.impression === 'string') out.overview.impression = o.impression
-    if (typeof o.ongoing === 'string') out.overview.ongoing = o.ongoing
+    if (typeof o.impression === 'string' && o.impression.trim() !== '') out.overview.impression = o.impression
+    if (typeof o.ongoing === 'string' && o.ongoing.trim() !== '') out.overview.ongoing = o.ongoing
     if (Array.isArray(o.recentEvents)) {
       out.overview.recentEvents = o.recentEvents.filter((x): x is string => typeof x === 'string')
     }
-    if (typeof o.latestProgress === 'string') out.overview.latestProgress = o.latestProgress
+    if (typeof o.latestProgress === 'string' && o.latestProgress.trim() !== '') out.overview.latestProgress = o.latestProgress
   }
   if (p.inventory && typeof p.inventory === 'object' && !Array.isArray(p.inventory)) {
     const inv = p.inventory as Record<string, unknown>

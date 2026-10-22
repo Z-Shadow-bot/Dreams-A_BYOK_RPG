@@ -206,6 +206,15 @@ export async function playSceneBgm(world: World | null, scene: string | undefine
     return
   }
   const candidates = raw.split('|').map((s) => s.trim()).filter(Boolean)
+  // 若当前正在播放的曲目属于本场景候选集（且同 DLC），则保持不变——
+  // 避免路由切换/状态页切换重新进入冒险页时，对多候选场景重新随机
+  const currentParts = currentKey ? currentKey.split('/') : []
+  const currentDlcId = currentParts[0]
+  const currentBasename = currentParts.slice(1).join('/')
+  if (currentDlcId === world.dlcId && currentBasename && candidates.includes(currentBasename)) {
+    console.log(`[bgm] playSceneBgm: 当前曲目 ${currentBasename} 属于本场景候选集，保持不变`)
+    return
+  }
   const basename = candidates.length > 1 ? candidates[Math.floor(Math.random() * candidates.length)] : candidates[0] ?? raw
   const cacheKey = `${world.dlcId}/${basename}`
   if (currentKey === cacheKey) { console.log('[bgm] playSceneBgm: 已在播放同一曲目，跳过'); return }

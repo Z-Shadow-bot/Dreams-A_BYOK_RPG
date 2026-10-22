@@ -16,7 +16,7 @@ export interface LoreInjectionConfig {
 // patchSave 格式说明（让 AI 输出存档修改指令而非完整存档，减小输出体积）
 const PATCH_SAVE_DESC = `patchSave 格式说明（关键：这是修改指令，不是完整存档！只列变化，不输出完整存档）：
 - panel：只列出值发生变化的面板键，如 { "hp": 75, "mood": "紧张" }；未列出的键保持原样。
-- characterProfile / experience / worldTime / overview（impression、ongoing、recentEvents、latestProgress）：需要整体替换时才提供，只替换列出的字段；无变化省略。
+- characterProfile / experience / worldTime / overview（impression、ongoing、recentEvents、latestProgress）：成段文本字段，需要整体替换时才提供完整新内容；无变化时省略。切勿返回空字符串——空字符串会被视为"未更新"而保留原值，不会清空；如需重写请提供完整新内容。
 - inventory（背包）：按物品名增量更新，只列出本轮新增或发生变化的物品（新增的物品提供完整字段；修改的物品至少提供 name + 变化的字段，未提供的字段保留原值）；未列出的物品一律保留原状，切勿整体重发背包。删除物品时在该物品对象里加 "remove": true（只需 name），如 { "name": "用完的绷带", "remove": true }。equipment 与 items 分开维护；物品在两者间移动时，在源列表 remove、在目标列表新增。注意：空数组 [] 表示"无变化"（不是清空背包）。
 - map / characters 字段已废弃，始终省略。
 - hidden：用 { "add": { "键": "值" }, "remove": ["键"] } 表达增量修改；无变化省略。`
