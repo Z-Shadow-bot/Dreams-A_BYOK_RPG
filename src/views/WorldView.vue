@@ -357,10 +357,18 @@ async function doImportDlc() {
         const oldDlcId = existing.dlcId!
         await persistDlcAudio(oldDlcId, parsed.bgmBytes)
         clearBgmCache(oldDlcId)
+        // 合并世界书：新 DLC 预设条目（含 fixed）用新版本更新；
+        // 玩家游玩中添加的条目（旧有但新 DLC 无同名）保留，不被覆盖
+        const newLore = m.world.lorebook ?? []
+        const newTitles = new Set(newLore.map((e) => (e.title ?? '').trim()).filter(Boolean))
+        const playerAddedLore = (existing.lorebook ?? []).filter((e) => {
+          const t = (e.title ?? '').trim()
+          return t && !newTitles.has(t)
+        })
         await worldStore.updateDlcWorldMeta(existing.id, {
           worldSetting: m.world.worldSetting,
           panelSchema: m.world.panelSchema,
-          lorebook: m.world.lorebook,
+          lorebook: [...newLore, ...playerAddedLore],
           bgm: parsed.bgm,
           sceneField: parsed.manifest.sceneField,
           presetCharacters: m.presetCharacters,
