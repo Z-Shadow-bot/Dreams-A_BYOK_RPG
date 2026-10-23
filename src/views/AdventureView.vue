@@ -163,13 +163,18 @@ function applyPreset() {
   }
 }
 
+// 彩蛋 BGM 播放后的保护窗口：在此期间 triggerBgm 跳过场景 BGM，
+// 避免 onMounted 先播彩蛋 BGM、随后 watch(currentScene) 立即用场景 BGM 覆盖
+let eggBgmLockUntil = 0
 function triggerBgm() {
   if (adventure.eggBgmPending) {
     const name = adventure.eggBgmPending
     adventure.eggBgmPending = null
+    eggBgmLockUntil = Date.now() + 3000
     void playBgmByName(worldStore.currentWorld, name)
     return
   }
+  if (Date.now() < eggBgmLockUntil) return
   if (adventure.hasAdventure) {
     void playSceneBgm(worldStore.currentWorld, currentScene.value)
   } else {
