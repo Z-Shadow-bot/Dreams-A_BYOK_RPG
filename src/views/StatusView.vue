@@ -315,7 +315,7 @@ const characterList = computed(() => {
           </div>
           <label class="edit-toggle-row">
             <input type="checkbox" v-model="editMode" />
-            <span>允许改写（开启后双击条目编辑，仅改本地存档，不调用 AI）</span>
+            <span>允许改写（开启后双击条目编辑）</span>
           </label>
         </div>
 
@@ -366,7 +366,7 @@ const characterList = computed(() => {
           </label>
           <label class="edit-toggle-row">
             <input type="checkbox" v-model="editMode" />
-            <span>允许改写（开启后双击条目编辑，仅改本地存档，不调用 AI）</span>
+            <span>允许改写（开启后双击条目编辑）</span>
           </label>
         </div>
 
