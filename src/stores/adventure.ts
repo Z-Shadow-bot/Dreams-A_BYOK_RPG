@@ -232,6 +232,10 @@ export const useAdventureStore = defineStore('adventure', {
         syncActiveNamesWithLorebook(this.currentSave, useWorldStore().currentWorld?.lorebook)
         this.currentIndex = state.currentIndex
       }
+      // 恢复待重试状态：上次行动出错时保存的回退点，退出重进后仍可点「重试」回退
+      if (state?.pendingRetry) {
+        this.pendingRetry = state.pendingRetry
+      }
       this.pages = pages
       this.savePoints = sps
       if (this.pages.length > 0) {
@@ -269,6 +273,7 @@ export const useAdventureStore = defineStore('adventure', {
         worldId: this.worldId,
         currentSave: clone(this.currentSave as SaveData),
         currentIndex: this.currentIndex,
+        pendingRetry: this.pendingRetry ? clone(this.pendingRetry) : null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       }

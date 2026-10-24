@@ -140,6 +140,13 @@ export interface WorldState {
   worldId: string
   currentSave: SaveData // 当前存档
   currentIndex: number // 当前页序号
+  pendingRetry?: {
+    input: string
+    save: SaveData
+    pages: StoryPage[]
+    currentIndex: number
+    lorebook: LoreEntry[] | null
+  } | null
   createdAt: number
   updatedAt: number
 }

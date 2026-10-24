@@ -198,6 +198,13 @@ function removeField(i: number) {
   editSchema.value.splice(i, 1)
 }
 
+function moveField(i: number, dir: -1 | 1) {
+  const arr = editSchema.value
+  const j = i + dir
+  if (j < 0 || j >= arr.length) return
+  ;[arr[i], arr[j]] = [arr[j], arr[i]]
+}
+
 function addLoreEntry() {
   editLorebook.value.push({ id: createId(), title: '', aliasesText: '', tagsText: '', content: '', required: false, linksText: '' })
 }
@@ -551,6 +558,8 @@ async function doImportDlc() {
                 <option value="number">数值</option>
               </select>
               <input v-model="f.unit" class="schema-input unit" placeholder="单位" />
+              <button class="schema-move" :disabled="i === 0" @click="moveField(i, -1)">↑</button>
+              <button class="schema-move" :disabled="i === editSchema.length - 1" @click="moveField(i, 1)">↓</button>
               <button class="schema-del" @click="removeField(i)">✕</button>
             </div>
           </div>
@@ -905,6 +914,19 @@ async function doImportDlc() {
 .schema-input.unit {
   flex: none;
   width: 60px;
+}
+.schema-move {
+  flex: none;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  font-size: 14px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.schema-move:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 .schema-del {
   flex: none;

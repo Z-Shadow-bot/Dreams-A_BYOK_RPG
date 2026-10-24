@@ -26,6 +26,56 @@ const experienceSaving = ref(false)
 const experienceSaved = ref(false)
 let experienceSavedTimer: ReturnType<typeof setTimeout> | null = null
 
+// 面板/背包本地改写（不调用 AI，直接改存档，下次行动传新存档）
+const editMode = ref(false)
+const editingPanelKey = ref<string | null>(null)
+const panelEditValue = ref('')
+const editingItem = ref<{ type: 'equipment' | 'items'; index: number } | null>(null)
+const itemEditName = ref('')
+const itemEditQty = ref('')
+const itemEditState = ref('')
+
+function startEditPanel(key: string) {
+  if (!editMode.value || !save.value) return
+  editingPanelKey.value = key
+  panelEditValue.value = String(save.value.panel[key] ?? '')
+}
+function saveEditPanel() {
+  if (!save.value || !editingPanelKey.value) return
+  save.value.panel[editingPanelKey.value] = panelEditValue.value
+  editingPanelKey.value = null
+  void adventure.persistState()
+}
+function cancelEditPanel() {
+  editingPanelKey.value = null
+}
+function startEditItem(type: 'equipment' | 'items', index: number) {
+  if (!editMode.value || !save.value) return
+  const it = save.value.inventory[type][index]
+  editingItem.value = { type, index }
+  itemEditName.value = it.name
+  itemEditQty.value = String(it.quantity ?? '')
+  itemEditState.value = it.state ?? ''
+}
+function saveEditItem() {
+  if (!save.value || !editingItem.value) return
+  const { type, index } = editingItem.value
+  const it = save.value.inventory[type][index]
+  it.name = itemEditName.value.trim()
+  it.quantity = itemEditQty.value.trim() ? Number(itemEditQty.value) : undefined
+  it.state = itemEditState.value.trim() || undefined
+  editingItem.value = null
+  void adventure.persistState()
+}
+function cancelEditItem() {
+  editingItem.value = null
+}
+function removeItem(type: 'equipment' | 'items', index: number) {
+  if (!save.value) return
+  save.value.inventory[type].splice(index, 1)
+  void adventure.persistState()
+}
+
 watch(
   () => save.value?.characterProfile,
   (v) => {
@@ -254,10 +304,19 @@ const characterList = computed(() => {
       <div class="content">
         <!-- 角色面板 -->
         <div v-if="activeTab === '面板'" class="panel">
-          <div v-for="f in schema" :key="f.key" class="panel-row">
+          <div v-for="f in schema" :key="f.key" class="panel-row" @dblclick="startEditPanel(f.key)">
             <span class="panel-label">{{ f.label }}</span>
-            <span class="panel-value">{{ save.panel[f.key] }}{{ f.unit ?? '' }}</span>
+            <template v-if="editingPanelKey === f.key">
+              <input v-model="panelEditValue" class="status-edit-input" @keyup.enter="saveEditPanel" @keyup.esc="cancelEditPanel" />
+              <button class="status-edit-btn save" @click="saveEditPanel">完成</button>
+              <button class="status-edit-btn cancel" @click="cancelEditPanel">取消</button>
+            </template>
+            <span v-else class="panel-value">{{ save.panel[f.key] }}{{ f.unit ?? '' }}</span>
           </div>
+          <label class="edit-toggle-row">
+            <input type="checkbox" v-model="editMode" />
+            <span>允许改写（开启后双击条目编辑，仅改本地存档，不调用 AI）</span>
+          </label>
         </div>
 
         <!-- 背包 -->
@@ -265,17 +324,36 @@ const characterList = computed(() => {
           <section class="block">
             <h3 class="block-title">装备</h3>
             <p v-if="save.inventory.equipment.length === 0" class="muted">（空）</p>
-            <div v-for="(it, i) in save.inventory.equipment" :key="i" class="row bag-row">
-              <span class="bag-name">{{ it.name }}</span>
-              <p v-if="it.state" class="bag-state">{{ it.state }}</p>
+            <div v-for="(it, i) in save.inventory.equipment" :key="i" class="row bag-row" @dblclick="startEditItem('equipment', i)">
+              <template v-if="editingItem && editingItem.type === 'equipment' && editingItem.index === i">
+                <input v-model="itemEditName" class="status-edit-input" placeholder="名称" />
+                <input v-model="itemEditState" class="status-edit-input" placeholder="状态" />
+                <button class="status-edit-btn save" @click="saveEditItem">完成</button>
+                <button class="status-edit-btn cancel" @click="cancelEditItem">取消</button>
+              </template>
+              <template v-else>
+                <span class="bag-name">{{ it.name }}</span>
+                <p v-if="it.state" class="bag-state">{{ it.state }}</p>
+                <button v-if="editMode" class="item-del-btn" @click.stop="removeItem('equipment', i)">✕</button>
+              </template>
             </div>
           </section>
           <section class="block">
             <h3 class="block-title">物品</h3>
             <p v-if="save.inventory.items.length === 0" class="muted">（空）</p>
-            <div v-for="(it, i) in save.inventory.items" :key="i" class="row bag-row">
-              <span class="bag-name">{{ it.name }}{{ it.quantity ? ` ×${it.quantity}` : '' }}</span>
-              <p v-if="it.state" class="bag-state">{{ it.state }}</p>
+            <div v-for="(it, i) in save.inventory.items" :key="i" class="row bag-row" @dblclick="startEditItem('items', i)">
+              <template v-if="editingItem && editingItem.type === 'items' && editingItem.index === i">
+                <input v-model="itemEditName" class="status-edit-input" placeholder="名称" />
+                <input v-model="itemEditQty" class="status-edit-input qty" placeholder="数量" />
+                <input v-model="itemEditState" class="status-edit-input" placeholder="状态" />
+                <button class="status-edit-btn save" @click="saveEditItem">完成</button>
+                <button class="status-edit-btn cancel" @click="cancelEditItem">取消</button>
+              </template>
+              <template v-else>
+                <span class="bag-name">{{ it.name }}{{ it.quantity ? ` ×${it.quantity}` : '' }}</span>
+                <p v-if="it.state" class="bag-state">{{ it.state }}</p>
+                <button v-if="editMode" class="item-del-btn" @click.stop="removeItem('items', i)">✕</button>
+              </template>
             </div>
           </section>
           <label class="detail-row">
@@ -285,6 +363,10 @@ const characterList = computed(() => {
               @change="toggleDetailedBag"
             />
             <span>精细化背包描述：对背包物品生成更详细的外观与状态描述</span>
+          </label>
+          <label class="edit-toggle-row">
+            <input type="checkbox" v-model="editMode" />
+            <span>允许改写（开启后双击条目编辑，仅改本地存档，不调用 AI）</span>
           </label>
         </div>
 
@@ -478,6 +560,59 @@ const characterList = computed(() => {
 .panel-value {
   font-weight: 600;
   font-size: 15px;
+}
+.status-edit-input {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--active);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 14px;
+  min-width: 0;
+}
+.status-edit-input.qty {
+  flex: none;
+  width: 60px;
+}
+.status-edit-btn {
+  flex: none;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.status-edit-btn.save {
+  background: var(--active);
+  color: #fff;
+}
+.status-edit-btn.cancel {
+  background: var(--surface-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.item-del-btn {
+  flex: none;
+  background: transparent;
+  color: var(--danger);
+  border: none;
+  font-size: 14px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.edit-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.edit-toggle-row input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
 }
 .block {
   background: var(--surface);
