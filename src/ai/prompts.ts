@@ -693,11 +693,9 @@ export function buildActionRecoverySplitNarrationPrompt(
 {
   "narration": "本轮剧情推进的叙事（精简但完整）",
   "options": ["参考选项1", "参考选项2", "参考选项3"],
-  "patchSave": { ...只列发生变化的字段，见下方说明... }
+  "patchSave": { ...只列发生变化的字段，见 patchSave 格式说明... }
 }
 不要输出 loreUpdates 字段。
-
-${PATCH_SAVE_DESC}
 
 ${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true, loreCfg)}
 
