@@ -335,6 +335,10 @@ const characterList = computed(() => {
       <div class="content">
         <!-- 角色面板 -->
         <div v-if="activeTab === '面板'" class="panel">
+          <label class="edit-toggle-row">
+            <input type="checkbox" v-model="editMode" />
+            <span>允许改写（开启后双击条目编辑）</span>
+          </label>
           <div v-for="f in schema" :key="f.key" class="panel-row" @dblclick="startEditPanel(f.key)">
             <span class="panel-label">{{ f.label }}</span>
             <template v-if="editingPanelKey === f.key">
@@ -344,10 +348,7 @@ const characterList = computed(() => {
             </template>
             <span v-else class="panel-value">{{ save.panel[f.key] }}{{ f.unit ?? '' }}</span>
           </div>
-          <label class="edit-toggle-row">
-            <input type="checkbox" v-model="editMode" />
-            <span>允许改写（开启后双击条目编辑）</span>
-          </label>
+
         </div>
 
         <!-- 背包 -->
