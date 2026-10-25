@@ -11,7 +11,7 @@ import {
   putSavePoint,
   deleteSavePoint,
 } from '@/db'
-import { generateAction, generateCharacter, normalizeSave, syncAfterRewrite, ensureOptions } from '@/ai/service'
+import { generateAction, generateCharacter, normalizeSave, ensureOptions } from '@/ai/service'
 import { errorMessage } from '@/ai/client'
 import { createId } from '@/types'
 import type { SaveData, StoryPage, SavePoint, WorldState, PanelField, LoreEntry, World, PresetCharacter } from '@/types'
@@ -118,6 +118,7 @@ function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreE
         hidden: u.hidden,
         isLocation: u.isLocation,
         isCharacter: u.isCharacter,
+        lastVisitedTime: u.lastVisitedTime !== undefined ? u.lastVisitedTime : old.lastVisitedTime,
       }
     } else {
       book.push({ ...u, remove: undefined, aliases: aliases.length > 0 ? aliases : undefined })
@@ -388,36 +389,24 @@ export const useAdventureStore = defineStore('adventure', {
           : undefined
         const config = useSettingsStore().config
         const s = useSettingsStore()
-        // 玩家改写同步：若最新一页被改写，先让 AI 以改写版为准校正世界书与存档，再继续行动
+        // 玩家改写同步：若最新一页被改写，不再单独发同步请求，
+               // 而是在本轮行动指令前加改写提示，让 AI 一次性完成"校正存档/世界书 + 推进剧情"
+        let actionInput = input
         const latestEdited = this.pages.length > 0 && this.pages[this.pages.length - 1].edited
           ? this.pages[this.pages.length - 1]
           : null
         if (latestEdited) {
-          this.recoveryNote = '检测到页面改写，正在与世界书和存档同步…'
-          try {
-            const sync = await syncAfterRewrite(world, this.currentSave, latestEdited, config)
-            if (this.worldId !== worldId) return
-            this.currentSave = sync.save
-            const syncedMerged = mergeLoreUpdates(world, sync.loreUpdates)
-            syncActiveNamesWithLorebook(this.currentSave, syncedMerged ?? world.lorebook)
-            if (syncedMerged) {
-              await useWorldStore().updateWorld(worldId, { lorebook: syncedMerged })
-            }
-            // 清除改写标记，避免每轮重复同步
-            const cleared = { ...latestEdited, edited: undefined }
-            this.pages[this.pages.length - 1] = cleared
-            await putPage(cleared)
-            this.recoveryNote = null
-          } catch (syncErr) {
-            this.recoveryNote = null
-            this.error = `改写同步失败（${errorMessage(syncErr, s.devMode)}），将按当前状态继续行动`
-          }
-          if (this.worldId !== worldId) return
+          actionInput = `【玩家已改写上一轮叙事，请以此改写版为准，先在 patchSave/loreUpdates 中校正存档与世界书，再推进剧情】\n${input}`
+          // 清除改写标记，避免每轮重复
+          const cleared = { ...latestEdited, edited: undefined }
+          this.pages[this.pages.length - 1] = cleared
+          await putPage(cleared)
         }
+
         const result = await generateAction(
           world,
           this.currentSave,
-          input,
+          actionInput,
           lastNarration,
           config,
           s.detailedBag,

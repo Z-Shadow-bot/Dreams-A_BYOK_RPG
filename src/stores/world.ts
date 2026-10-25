@@ -16,7 +16,7 @@ export function normalizeImportedLorebook(raw: unknown[]): LoreEntry[] {
       : []
     const title = typeof e.title === 'string' && e.title.trim() ? e.title.trim() : undefined
     const aliases = Array.isArray(e.aliases) ? e.aliases.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t) : []
-    result.push({ id: createId(), title, aliases: aliases.length > 0 ? aliases : undefined, tags, content, required: !!e.required, fixed: e.fixed === true ? true : undefined, links: Array.isArray(e.links) ? e.links.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t) : undefined, hidden: e.hidden === true ? true : undefined, isLocation: e.isLocation === true ? true : undefined, isCharacter: e.isCharacter === true ? true : undefined })
+    result.push({ id: createId(), title, aliases: aliases.length > 0 ? aliases : undefined, tags, content, required: !!e.required, fixed: e.fixed === true ? true : undefined, links: Array.isArray(e.links) ? e.links.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t) : undefined, hidden: e.hidden === true ? true : undefined, isLocation: e.isLocation === true ? true : undefined, isCharacter: e.isCharacter === true ? true : undefined, lastVisitedTime: typeof e.lastVisitedTime === 'string' && e.lastVisitedTime.trim() ? e.lastVisitedTime.trim() : undefined })
   }
   return result
 }

@@ -70,6 +70,7 @@ export interface LoreEntry {
   hidden?: boolean // 隐藏条目（彩蛋NPC等，状态页世界书概览不显示；角色出场后通过 loreUpdates 移除此标记）
   isLocation?: boolean // 地点条目（AI 自动打上，不显示为标签，不需要玩家编辑；状态页"地图"从此类条目读取）
   isCharacter?: boolean // 人物条目（AI 自动打上，不显示为标签，不需要玩家编辑；状态页"人物"从此类条目读取）
+  lastVisitedTime?: string // 上次到访/接触的冒险时间（worldTime 快照），用于故地重游/故人重逢时判断时间流逝
   remove?: boolean // 删除标记（仅用于 loreUpdates 输出：仅当条目完全重复或记录错误时 AI 返回 { title, remove: true }；已死亡/损毁的条目须保留并用 content 标注终态，不持久化）
 }
 

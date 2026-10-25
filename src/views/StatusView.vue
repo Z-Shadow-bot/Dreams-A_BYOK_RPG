@@ -76,6 +76,37 @@ function removeItem(type: 'equipment' | 'items', index: number) {
   void adventure.persistState()
 }
 
+// 地图/人物条目本地改写（直接改对应世界书条目的 title/content）
+const editingLore = ref<{ type: 'location' | 'character'; title: string } | null>(null)
+const loreEditName = ref('')
+const loreEditDesc = ref('')
+
+function startEditLore(type: 'location' | 'character', title: string) {
+  if (!editMode.value) return
+  const world = worldStore.currentWorld
+  if (!world?.lorebook) return
+  const e = world.lorebook.find((x) => (type === 'location' ? x.isLocation : x.isCharacter) && (x.title ?? '').trim() === title)
+  if (!e) return
+  editingLore.value = { type, title }
+  loreEditName.value = e.title ?? ''
+  loreEditDesc.value = e.content ?? ''
+}
+function saveEditLore() {
+  const world = worldStore.currentWorld
+  if (!world?.lorebook || !editingLore.value) return
+  const { type, title } = editingLore.value
+  const e = world.lorebook.find((x) => (type === 'location' ? x.isLocation : x.isCharacter) && (x.title ?? '').trim() === title)
+  if (e) {
+    e.title = loreEditName.value.trim() || e.title
+    e.content = loreEditDesc.value
+  }
+  editingLore.value = null
+  void worldStore.updateWorld(world.id, { lorebook: world.lorebook })
+}
+function cancelEditLore() {
+  editingLore.value = null
+}
+
 watch(
   () => save.value?.characterProfile,
   (v) => {
@@ -373,26 +404,51 @@ const characterList = computed(() => {
         <!-- 地图 -->
         <div v-else-if="activeTab === '地图'" class="list">
           <p v-if="mapList.length === 0" class="muted">（暂无地点）</p>
-          <div v-for="(loc, i) in mapList" :key="i" class="card">
+          <div v-for="(loc, i) in mapList" :key="i" class="card" @dblclick="startEditLore('location', loc.name)">
             <div class="card-head">
               <span class="card-name">{{ loc.name }}</span>
               <span v-if="loc.active" class="badge">当前</span>
             </div>
-            <p class="card-desc">{{ loc.description }}</p>
+            <template v-if="editingLore && editingLore.type === 'location' && editingLore.title === loc.name">
+              <input v-model="loreEditName" class="status-edit-input" placeholder="名称" />
+              <textarea v-model="loreEditDesc" class="status-edit-textarea" rows="4" placeholder="描述" />
+              <div class="edit-actions">
+                <button class="status-edit-btn save" @click="saveEditLore">完成</button>
+                <button class="status-edit-btn cancel" @click="cancelEditLore">取消</button>
+              </div>
+            </template>
+            <p v-else class="card-desc">{{ loc.description }}</p>
           </div>
+          <label class="edit-toggle-row">
+            <input type="checkbox" v-model="editMode" />
+            <span>允许改写（开启后双击条目编辑）</span>
+          </label>
         </div>
 
         <!-- 人物 -->
         <div v-else-if="activeTab === '人物'" class="list">
           <p v-if="characterList.length === 0" class="muted">（尚未接触任何人物）</p>
-          <div v-for="(c, i) in characterList" :key="i" class="card">
+          <div v-for="(c, i) in characterList" :key="i" class="card" @dblclick="startEditLore('character', c.name)">
             <div class="card-head">
               <span class="card-name">{{ c.name }}</span>
               <span v-if="c.active" class="badge">当前</span>
             </div>
-            <p class="card-desc">{{ c.description }}</p>
+            <template v-if="editingLore && editingLore.type === 'character' && editingLore.title === c.name">
+              <input v-model="loreEditName" class="status-edit-input" placeholder="名称" />
+              <textarea v-model="loreEditDesc" class="status-edit-textarea" rows="4" placeholder="描述" />
+              <div class="edit-actions">
+                <button class="status-edit-btn save" @click="saveEditLore">完成</button>
+                <button class="status-edit-btn cancel" @click="cancelEditLore">取消</button>
+              </div>
+            </template>
+            <p v-else class="card-desc">{{ c.description }}</p>
           </div>
+          <label class="edit-toggle-row">
+            <input type="checkbox" v-model="editMode" />
+            <span>允许改写（开启后双击条目编辑）</span>
+          </label>
         </div>
+
 
         <!-- 角色设定 -->
         <div v-else-if="activeTab === '设定'" class="prose">
@@ -613,6 +669,22 @@ const characterList = computed(() => {
   width: 16px;
   height: 16px;
   cursor: pointer;
+}
+.status-edit-textarea {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--active);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 14px;
+  resize: vertical;
+  min-height: 80px;
+  margin: 4px 0;
+}
+.edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
 }
 .block {
   background: var(--surface);

@@ -36,6 +36,7 @@ interface LoreEditRow {
   id: string
   title: string
   aliasesText: string
+  lastVisitedTimeText: string
   tagsText: string
   content: string
   required: boolean
@@ -173,6 +174,7 @@ function openEdit(w: World) {
     id: e.id,
     title: e.title ?? '',
     aliasesText: (e.aliases ?? []).join(', '),
+    lastVisitedTimeText: e.lastVisitedTime ?? '',
     tagsText: (e.tags ?? []).join(', '),
     content: e.content ?? '',
     required: !!e.required,
@@ -206,7 +208,7 @@ function moveField(i: number, dir: -1 | 1) {
 }
 
 function addLoreEntry() {
-  editLorebook.value.push({ id: createId(), title: '', aliasesText: '', tagsText: '', content: '', required: false, linksText: '' })
+  editLorebook.value.push({ id: createId(), title: '', aliasesText: '', lastVisitedTimeText: '', tagsText: '', content: '', required: false, linksText: '' })
 }
 
 function removeLoreEntry(id: string) {
@@ -282,10 +284,12 @@ async function saveEdit() {
       .split(/[,，]/)
       .map((t) => t.trim())
       .filter((t) => !!t)
+    const lastVisitedTime = r.lastVisitedTimeText.trim()
     lorebook.push({
       id: r.id,
       title: r.title.trim() || undefined,
       aliases: aliases.length > 0 ? aliases : undefined,
+      lastVisitedTime: lastVisitedTime || undefined,
       tags,
       content,
       required: r.required,
@@ -591,6 +595,14 @@ async function doImportDlc() {
                   <input type="checkbox" v-model="entry.fixed" />
                   <span>固定</span>
                 </label>
+                <label class="lore-required">
+                  <input type="checkbox" v-model="entry.isLocation" />
+                  <span>地点</span>
+                </label>
+                <label class="lore-required">
+                  <input type="checkbox" v-model="entry.isCharacter" />
+                  <span>人物</span>
+                </label>
                 <button
                   class="schema-del"
                   :class="{ confirm: confirmLoreDeleteId === entry.id }"
@@ -600,6 +612,7 @@ async function doImportDlc() {
                 </button>
               </div>
               <input v-model="entry.aliasesText" class="input lore-tags" placeholder="别名/曾用称呼（逗号分隔，如：神秘人, 旧称）" />
+              <input v-model="entry.lastVisitedTimeText" class="input lore-tags" placeholder="上次到访时间（冒险时间，如：启程第12天·深秋·入夜前）" />
               <input v-model="entry.tagsText" class="input lore-tags" placeholder="标签（逗号分隔，如：山脉, 鹰族, 边境）" />
               <input v-model="entry.linksText" class="input lore-tags" placeholder="关联条目（逗号分隔的条目标题，注入时一并带入）" />
               <textarea v-model="entry.content" class="textarea" rows="4" placeholder="条目详细设定内容" />

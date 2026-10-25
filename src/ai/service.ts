@@ -286,6 +286,7 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
     hidden: e.hidden === true ? true : undefined,
     isLocation: e.isLocation === true ? true : undefined,
     isCharacter: e.isCharacter === true ? true : undefined,
+    lastVisitedTime: asString(e.lastVisitedTime).trim() || undefined,
   }
 }
 
