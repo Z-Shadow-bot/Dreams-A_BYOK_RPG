@@ -352,6 +352,10 @@ const characterList = computed(() => {
 
         <!-- 背包 -->
         <div v-else-if="activeTab === '背包'" class="bag">
+          <label class="edit-toggle-row">
+            <input type="checkbox" v-model="editMode" />
+            <span>允许改写（开启后双击条目编辑）</span>
+          </label>
           <section class="block">
             <h3 class="block-title">装备</h3>
             <p v-if="save.inventory.equipment.length === 0" class="muted">（空）</p>
@@ -395,14 +399,14 @@ const characterList = computed(() => {
             />
             <span>精细化背包描述：对背包物品生成更详细的外观与状态描述</span>
           </label>
-          <label class="edit-toggle-row">
-            <input type="checkbox" v-model="editMode" />
-            <span>允许改写（开启后双击条目编辑）</span>
-          </label>
         </div>
 
         <!-- 地图 -->
         <div v-else-if="activeTab === '地图'" class="list">
+          <label class="edit-toggle-row">
+            <input type="checkbox" v-model="editMode" />
+            <span>允许改写（开启后双击条目编辑）</span>
+          </label>
           <p v-if="mapList.length === 0" class="muted">（暂无地点）</p>
           <div v-for="(loc, i) in mapList" :key="i" class="card" @dblclick="startEditLore('location', loc.name)">
             <div class="card-head">
@@ -419,14 +423,14 @@ const characterList = computed(() => {
             </template>
             <p v-else class="card-desc">{{ loc.description }}</p>
           </div>
-          <label class="edit-toggle-row">
-            <input type="checkbox" v-model="editMode" />
-            <span>允许改写（开启后双击条目编辑）</span>
-          </label>
         </div>
 
         <!-- 人物 -->
         <div v-else-if="activeTab === '人物'" class="list">
+          <label class="edit-toggle-row">
+            <input type="checkbox" v-model="editMode" />
+            <span>允许改写（开启后双击条目编辑）</span>
+          </label>
           <p v-if="characterList.length === 0" class="muted">（尚未接触任何人物）</p>
           <div v-for="(c, i) in characterList" :key="i" class="card" @dblclick="startEditLore('character', c.name)">
             <div class="card-head">
@@ -443,12 +447,7 @@ const characterList = computed(() => {
             </template>
             <p v-else class="card-desc">{{ c.description }}</p>
           </div>
-          <label class="edit-toggle-row">
-            <input type="checkbox" v-model="editMode" />
-            <span>允许改写（开启后双击条目编辑）</span>
-          </label>
         </div>
-
 
         <!-- 角色设定 -->
         <div v-else-if="activeTab === '设定'" class="prose">

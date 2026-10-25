@@ -587,6 +587,15 @@ async function doImportDlc() {
             <div v-for="entry in displayedLorebook" :key="entry.id" class="lore-card">
               <div class="lore-head">
                 <input v-model="entry.title" class="input lore-title" placeholder="条目标题（可选）" />
+                <button
+                  class="schema-del"
+                  :class="{ confirm: confirmLoreDeleteId === entry.id }"
+                  @click="removeLoreEntry(entry.id)"
+                >
+                  {{ confirmLoreDeleteId === entry.id ? '确认删除？' : '✕' }}
+                </button>
+              </div>
+              <div class="lore-flags">
                 <label class="lore-required">
                   <input type="checkbox" v-model="entry.required" />
                   <span>必需</span>
@@ -603,13 +612,6 @@ async function doImportDlc() {
                   <input type="checkbox" v-model="entry.isCharacter" />
                   <span>人物</span>
                 </label>
-                <button
-                  class="schema-del"
-                  :class="{ confirm: confirmLoreDeleteId === entry.id }"
-                  @click="removeLoreEntry(entry.id)"
-                >
-                  {{ confirmLoreDeleteId === entry.id ? '确认删除？' : '✕' }}
-                </button>
               </div>
               <input v-model="entry.aliasesText" class="input lore-tags" placeholder="别名/曾用称呼（逗号分隔，如：神秘人, 旧称）" />
               <input v-model="entry.lastVisitedTimeText" class="input lore-tags" placeholder="上次到访时间（冒险时间，如：启程第12天·深秋·入夜前）" />
@@ -1012,6 +1014,12 @@ async function doImportDlc() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.lore-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
 }
 .lore-title {
   flex: 1;
