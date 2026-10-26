@@ -357,6 +357,14 @@ const characterList = computed(() => {
             <input type="checkbox" v-model="editMode" />
             <span>允许改写（开启后双击条目编辑）</span>
           </label>
+          <label class="detail-row">
+            <input
+              type="checkbox"
+              :checked="settings.detailedBag"
+              @change="toggleDetailedBag"
+            />
+            <span>精细化背包描述：生成更详细的介绍描述</span>
+          </label>
           <section class="block">
             <h3 class="block-title">装备</h3>
             <p v-if="save.inventory.equipment.length === 0" class="muted">（空）</p>
@@ -392,15 +400,7 @@ const characterList = computed(() => {
               </template>
             </div>
           </section>
-          <label class="detail-row">
-            <input
-              type="checkbox"
-              :checked="settings.detailedBag"
-              @change="toggleDetailedBag"
-            />
-            <span>精细化背包描述：对背包物品生成更详细的外观与状态描述</span>
-          </label>
-        </div>
+          </div>
 
         <!-- 地图 -->
         <div v-else-if="activeTab === '地图'" class="list">
@@ -473,6 +473,7 @@ const characterList = computed(() => {
           <button class="save-profile-btn" :disabled="profileSaving" @click="saveProfile">
             {{ profileSaved ? '已保存 ✓' : '保存设定' }}
           </button>
+          <p class="lore-tip">编辑世界书请在「世界 - 设定 - 世界书」</p>
 
           <section v-if="loreOverview.length > 0" class="block lore-overview">
             <div class="lore-overview-header">
@@ -499,9 +500,7 @@ const characterList = computed(() => {
 
         <!-- 角色经历 -->
         <div v-else-if="activeTab === '经历'" class="prose">
-          <p class="body-text profile-tip">
-            AI 会在此记录冒险以来经历的重要事件概括，与人设分开维护。你也可以手动编辑。
-          </p>
+
           <textarea
             v-model="experienceEdit"
             class="profile-edit"
@@ -660,15 +659,37 @@ const characterList = computed(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 12px;
+  margin-top: 0;
   font-size: 13px;
   color: var(--muted);
   cursor: pointer;
 }
-.edit-toggle-row input {
+.edit-toggle-row input,
+.detail-row input {
+  appearance: none;
+  -webkit-appearance: none;
   width: 16px;
   height: 16px;
+  border: 1.5px solid var(--muted);
+  border-radius: 4px;
+  background: var(--bg);
   cursor: pointer;
+  flex: none;
+  position: relative;
+}
+.edit-toggle-row input:checked,
+.detail-row input:checked {
+  background: var(--active);
+  border-color: var(--active);
+}
+.edit-toggle-row input:checked::after,
+.detail-row input:checked::after {
+  content: '✓';
+  position: absolute;
+  left: 2px;
+  top: -3px;
+  font-size: 13px;
+  color: #fff;
 }
 .status-edit-textarea {
   width: 100%;
@@ -732,18 +753,11 @@ const characterList = computed(() => {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 8px;
   font-size: 13px;
   color: var(--muted);
   cursor: pointer;
   line-height: 1.5;
-}
-.detail-row input {
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-  margin-top: 1px;
-  flex: none;
 }
 .lore-overview {
   margin-top: 16px;
@@ -900,6 +914,12 @@ const characterList = computed(() => {
 .profile-tip {
   color: var(--muted);
   font-size: 13px;
+}
+.lore-tip {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 10px 0 0;
+  text-align: center;
 }
 .events {
   padding-left: 20px;
