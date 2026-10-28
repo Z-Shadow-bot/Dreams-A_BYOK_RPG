@@ -98,6 +98,7 @@ export interface World {
   presetCharacters?: PresetCharacter[] // DLC 预设角色（label 简称 + description 完整设定），导入后供玩家选择
   characterFallback?: string // 角色来源兜底：玩家创建的角色不符合世界规则时的兜底处理，仅在创建角色（开始冒险）时注入，不在后续行动中使用
   loreLimit?: number // 单轮注入的世界书最大匹配条目数（默认 12；越大每轮消耗 token 越多，生成越慢）
+  dlcLoreTitles?: string[] // DLC 初始世界书条目的 title 列表（更新 DLC 时用于区分初始条目与玩家添加条目）
 }
 
 // ===== 预设角色（DLC 提供的可选起始角色） =====
@@ -148,6 +149,7 @@ export interface WorldState {
     currentIndex: number
     lorebook: LoreEntry[] | null
   } | null
+  npcSurpriseCounter?: number // 距下一次"久未见 NPC 随机引入"还剩的回合数（1-10 随机重置）
   createdAt: number
   updatedAt: number
 }

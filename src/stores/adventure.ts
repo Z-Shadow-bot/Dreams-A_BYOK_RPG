@@ -162,6 +162,14 @@ function syncActiveNamesWithLorebook(save: SaveData | null, lorebook: LoreEntry[
   fix(save.activeCharacters)
 }
 
+// 从世界书中随机选一个"未在当前活跃人物列表"的人物条目（用于久未见 NPC 随机引入）
+function pickUnseenNpc(lorebook: LoreEntry[], activeCharacters: string[]): LoreEntry | null {
+  const active = new Set(activeCharacters.map((n) => n.trim()))
+  const candidates = lorebook.filter((e) => e.isCharacter && !e.hidden && !active.has((e.title ?? '').trim()))
+  if (candidates.length === 0) return null
+  return candidates[Math.floor(Math.random() * candidates.length)]
+}
+
 export const useAdventureStore = defineStore('adventure', {
   state: () => ({
     worldId: null as string | null,
@@ -187,6 +195,7 @@ export const useAdventureStore = defineStore('adventure', {
     },
     recoveryNote: null as string | null, // 截断自动降级时展示的提示文案
     loadingEndTime: 0, // 最近一次生成完成的毫秒时间戳（用于返回冒险页时判断是否需要滚动到顶部）
+    npcSurpriseCounter: 0, // 距下一次"久未见 NPC 随机引入"还剩的回合数
   }),
   getters: {
     hasAdventure(state): boolean {
@@ -237,6 +246,10 @@ export const useAdventureStore = defineStore('adventure', {
       if (state?.pendingRetry) {
         this.pendingRetry = state.pendingRetry
       }
+      // 恢复"久未见 NPC 随机引入"计数；无记录（或非正数）则随机 1-10
+      this.npcSurpriseCounter = state?.npcSurpriseCounter && state.npcSurpriseCounter > 0
+        ? state.npcSurpriseCounter
+        : 1 + Math.floor(Math.random() * 10)
       this.pages = pages
       this.savePoints = sps
       if (this.pages.length > 0) {
@@ -275,6 +288,7 @@ export const useAdventureStore = defineStore('adventure', {
         currentSave: clone(this.currentSave as SaveData),
         currentIndex: this.currentIndex,
         pendingRetry: this.pendingRetry ? clone(this.pendingRetry) : null,
+        npcSurpriseCounter: this.npcSurpriseCounter,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       }
@@ -403,6 +417,14 @@ export const useAdventureStore = defineStore('adventure', {
           await putPage(cleared)
         }
 
+        // 久未见 NPC 随机引入：计数递减，到 0 时随机选一个非活跃人物传入，并重置为 1-10 随机间隔
+        let unseenNpc: LoreEntry | undefined
+        if (this.npcSurpriseCounter > 0) this.npcSurpriseCounter--
+        if (this.npcSurpriseCounter <= 0) {
+          unseenNpc = pickUnseenNpc(world.lorebook ?? [], this.currentSave?.activeCharacters ?? []) ?? undefined
+          this.npcSurpriseCounter = 1 + Math.floor(Math.random() * 10)
+        }
+
         const result = await generateAction(
           world,
           this.currentSave,
@@ -414,6 +436,7 @@ export const useAdventureStore = defineStore('adventure', {
           () => {
             this.recoveryNote = '文本较长，正在优化生成方式，请稍候…'
           },
+          unseenNpc,
         )
         if (this.worldId !== worldId) return
         result.options = await ensureOptions(result.options, result.narration, config, s.optionFallback)

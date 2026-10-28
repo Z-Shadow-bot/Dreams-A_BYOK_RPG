@@ -375,6 +375,7 @@ export async function generateAction(
   detailedBag: boolean = false,
   narrativeSpeed: NarrativeSpeed = 'normal',
   onRecoverStart?: () => void,
+  unseenNpc?: LoreEntry,
 ): Promise<AIResponse> {
   const { min, max } = narrationRange(config)
   const system = buildActionSystemPrompt(min, max, world, detailedBag, true)
@@ -386,7 +387,7 @@ export async function generateAction(
         { role: 'system', content: system },
         {
           role: 'user',
-          content: buildActionPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules, getLoreCfg()),
+          content: buildActionPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules, getLoreCfg(), unseenNpc),
         },
       ],
       config,
@@ -402,7 +403,7 @@ export async function generateAction(
     if (e instanceof AIError && e.truncated) {
       // 输出被截断：按用户设置的策略自动降级重试，避免再次截断
       onRecoverStart?.()
-      return recoverAction(world, currentSave, userInput, lastNarration, config, detailedBag, narrativeSpeed)
+      return recoverAction(world, currentSave, userInput, lastNarration, config, detailedBag, narrativeSpeed, unseenNpc)
     }
     throw e
   }
@@ -498,6 +499,7 @@ async function recoverAction(
   config: APIConfig,
   detailedBag: boolean,
   narrativeSpeed: NarrativeSpeed,
+  unseenNpc?: LoreEntry,
 ): Promise<AIResponse> {
   const { min, max } = narrationRange(config)
   const system = buildActionSystemPrompt(min, max, world, detailedBag, true)
@@ -510,7 +512,7 @@ async function recoverAction(
       { role: 'system', content: system },
       {
         role: 'user',
-        content: buildActionRecoverySplitNarrationPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules, loreCfg),
+        content: buildActionRecoverySplitNarrationPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules, loreCfg, unseenNpc),
       },
     ],
     config,

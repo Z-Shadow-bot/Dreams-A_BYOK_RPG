@@ -77,15 +77,25 @@ function removeItem(type: 'equipment' | 'items', index: number) {
 }
 
 // 地图/人物条目本地改写（直接改对应世界书条目的 title/content）
-const editingLore = ref<{ type: 'location' | 'character'; title: string } | null>(null)
+const editingLore = ref<{ type: 'location' | 'character' | 'lore'; title: string } | null>(null)
 const loreEditName = ref('')
 const loreEditDesc = ref('')
 
-function startEditLore(type: 'location' | 'character', title: string) {
-  if (!editMode.value) return
+// 按编辑类型在 world.lorebook 中定位条目：location/character 按属性，lore 为任意非隐藏条目
+function findLoreEntry(type: 'location' | 'character' | 'lore', title: string) {
   const world = worldStore.currentWorld
-  if (!world?.lorebook) return
-  const e = world.lorebook.find((x) => (type === 'location' ? x.isLocation : x.isCharacter) && (x.title ?? '').trim() === title)
+  if (!world?.lorebook) return undefined
+  return world.lorebook.find((x) => {
+    if ((x.title ?? '').trim() !== title) return false
+    if (type === 'location') return !!x.isLocation
+    if (type === 'character') return !!x.isCharacter
+    return !x.hidden
+  })
+}
+
+function startEditLore(type: 'location' | 'character' | 'lore', title: string) {
+  if (!editMode.value) return
+  const e = findLoreEntry(type, title)
   if (!e) return
   editingLore.value = { type, title }
   loreEditName.value = e.title ?? ''
@@ -95,7 +105,7 @@ function saveEditLore() {
   const world = worldStore.currentWorld
   if (!world?.lorebook || !editingLore.value) return
   const { type, title } = editingLore.value
-  const e = world.lorebook.find((x) => (type === 'location' ? x.isLocation : x.isCharacter) && (x.title ?? '').trim() === title)
+  const e = findLoreEntry(type, title)
   if (e) {
     e.title = loreEditName.value.trim() || e.title
     e.content = loreEditDesc.value
@@ -473,9 +483,12 @@ const characterList = computed(() => {
           <button class="save-profile-btn" :disabled="profileSaving" @click="saveProfile">
             {{ profileSaved ? '已保存 ✓' : '保存设定' }}
           </button>
-          <p class="lore-tip">编辑世界书请在「世界 - 设定 - 世界书」</p>
 
           <section v-if="loreOverview.length > 0" class="block lore-overview">
+            <label class="edit-toggle-row">
+              <input type="checkbox" v-model="editMode" />
+              <span>允许改写（开启后双击条目编辑）</span>
+            </label>
             <div class="lore-overview-header">
               <h3 class="block-title">世界书（{{ loreOverview.length }} 条）</h3>
               <button class="lore-order-btn" @click="loreOrder = loreOrder === 'asc' ? 'desc' : 'asc'">
@@ -483,16 +496,26 @@ const characterList = computed(() => {
               </button>
             </div>
             <input v-model="loreKeyword" class="lore-search" placeholder="检索条目（标题/标签/内容）" />
-            <div v-for="entry in displayedLoreOverview" :key="entry.id" class="lore-overview-row">
-              <div class="lore-overview-head">
-                <span class="lore-overview-title">{{ entry.title }}</span>
-                <span v-if="entry.required" class="lore-flag">必需</span>
-                <span v-if="entry.fixed" class="lore-flag fixed">固定</span>
-              </div>
-              <div class="lore-overview-tags">
-                <span v-for="t in entry.tags" :key="t" class="lore-tag">{{ t }}</span>
-              </div>
-              <p class="lore-overview-preview">{{ entry.content }}</p>
+            <div v-for="entry in displayedLoreOverview" :key="entry.id" class="lore-overview-row" @dblclick="startEditLore('lore', entry.title)">
+              <template v-if="editingLore && editingLore.type === 'lore' && editingLore.title === entry.title">
+                <input v-model="loreEditName" class="status-edit-input" placeholder="标题" />
+                <textarea v-model="loreEditDesc" class="status-edit-textarea" rows="4" placeholder="内容" />
+                <div class="edit-actions">
+                  <button class="status-edit-btn save" @click="saveEditLore">完成</button>
+                  <button class="status-edit-btn cancel" @click="cancelEditLore">取消</button>
+                </div>
+              </template>
+              <template v-else>
+                <div class="lore-overview-head">
+                  <span class="lore-overview-title">{{ entry.title }}</span>
+                  <span v-if="entry.required" class="lore-flag">必需</span>
+                  <span v-if="entry.fixed" class="lore-flag fixed">固定</span>
+                </div>
+                <div class="lore-overview-tags">
+                  <span v-for="t in entry.tags" :key="t" class="lore-tag">{{ t }}</span>
+                </div>
+                <p class="lore-overview-preview">{{ entry.content }}</p>
+              </template>
             </div>
             <p v-if="displayedLoreOverview.length === 0" class="muted">没有匹配的条目</p>
           </section>

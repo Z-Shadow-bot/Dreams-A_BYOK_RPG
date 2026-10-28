@@ -207,6 +207,15 @@ function moveField(i: number, dir: -1 | 1) {
   ;[arr[i], arr[j]] = [arr[j], arr[i]]
 }
 
+// 规范化列表输入：把中文逗号（，）统一为「英文逗号 + 空格」，并去除空项
+function normalizeListText(v: string): string {
+  return v
+    .split(/[,，]/)
+    .map((s) => s.trim())
+    .filter((s) => !!s)
+    .join(', ')
+}
+
 function addLoreEntry() {
   editLorebook.value.push({ id: createId(), title: '', aliasesText: '', lastVisitedTimeText: '', tagsText: '', content: '', required: false, linksText: '' })
 }
@@ -368,22 +377,41 @@ async function doImportDlc() {
         const oldDlcId = existing.dlcId!
         await persistDlcAudio(oldDlcId, parsed.bgmBytes)
         clearBgmCache(oldDlcId)
-        // 合并世界书：新 DLC 预设条目（含 fixed）用新版本更新；
-        // 玩家游玩中添加的条目（旧有但新 DLC 无同名）保留，不被覆盖
+        // 合并世界书（保留存档更新）：
+        //  - DLC 初始条目：fixed 用新版覆盖；非 fixed 保留玩家版（避免吞掉彩蛋角色出场等玩家进度）
+        //  - 玩家添加的条目（不在旧 DLC 初始列表）：保留
+        //  - 新版新增条目：加入；新版删除的初始条目：移除
         const newLore = m.world.lorebook ?? []
+        const oldLore = existing.lorebook ?? []
+        const oldDlcTitles = new Set(existing.dlcLoreTitles ?? [])
         const newTitles = new Set(newLore.map((e) => (e.title ?? '').trim()).filter(Boolean))
-        const playerAddedLore = (existing.lorebook ?? []).filter((e) => {
+        const oldByTitle = new Map(oldLore.map((e) => [(e.title ?? '').trim(), e]))
+        const mergedLore: LoreEntry[] = []
+        for (const e of newLore) {
           const t = (e.title ?? '').trim()
-          return t && !newTitles.has(t)
-        })
+          const old = t ? oldByTitle.get(t) : undefined
+          // 非 fixed 且旧世界已有同名 → 保留玩家版；否则采用新版
+          mergedLore.push(old && e.fixed !== true ? old : e)
+        }
+        for (const e of oldLore) {
+          const t = (e.title ?? '').trim()
+          if (!t || oldDlcTitles.has(t) || newTitles.has(t)) continue
+          mergedLore.push(e) // 玩家添加的条目，保留
+        }
+        // 合并 panelSchema：保留玩家新增的字段（旧有但新版无同 key），DLC 预设字段用新版
+        const newSchema = m.world.panelSchema ?? []
+        const oldSchema = existing.panelSchema ?? []
+        const newKeys = new Set(newSchema.map((f) => f.key))
+        const mergedSchema = [...newSchema, ...oldSchema.filter((f) => !newKeys.has(f.key))]
         await worldStore.updateDlcWorldMeta(existing.id, {
           worldSetting: m.world.worldSetting,
-          panelSchema: m.world.panelSchema,
-          lorebook: [...newLore, ...playerAddedLore],
+          panelSchema: mergedSchema,
+          lorebook: mergedLore,
           bgm: parsed.bgm,
           sceneField: parsed.manifest.sceneField,
           presetCharacters: m.presetCharacters,
           characterFallback: parsed.manifest.characterFallback,
+          dlcLoreTitles: newLore.map((e) => (e.title ?? '').trim()).filter((t) => !!t),
         })
         await adventure.open(existing.id)
         await adventure.renormalize()
@@ -613,10 +641,10 @@ async function doImportDlc() {
                   <span>人物</span>
                 </label>
               </div>
-              <input v-model="entry.aliasesText" class="input lore-tags" placeholder="别名/曾用称呼（逗号分隔，如：神秘人, 旧称）" />
+              <input v-model="entry.aliasesText" @blur="entry.aliasesText = normalizeListText(entry.aliasesText)" class="input lore-tags" placeholder="别名/曾用称呼（逗号分隔，如：神秘人, 旧称）" />
               <input v-model="entry.lastVisitedTimeText" class="input lore-tags" placeholder="上次到访时间（冒险时间，如：启程第12天·深秋·入夜前）" />
-              <input v-model="entry.tagsText" class="input lore-tags" placeholder="标签（逗号分隔，如：山脉, 鹰族, 边境）" />
-              <input v-model="entry.linksText" class="input lore-tags" placeholder="关联条目（逗号分隔的条目标题，注入时一并带入）" />
+              <input v-model="entry.tagsText" @blur="entry.tagsText = normalizeListText(entry.tagsText)" class="input lore-tags" placeholder="标签（逗号分隔，如：山脉, 鹰族, 边境）" />
+              <input v-model="entry.linksText" @blur="entry.linksText = normalizeListText(entry.linksText)" class="input lore-tags" placeholder="关联条目（逗号分隔的条目标题，注入时一并带入）" />
               <textarea v-model="entry.content" class="textarea" rows="4" placeholder="条目详细设定内容" />
             </div>
             <p v-if="displayedLorebook.length === 0" class="muted-text">

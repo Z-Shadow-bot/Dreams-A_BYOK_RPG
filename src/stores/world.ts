@@ -114,6 +114,7 @@ export const useWorldStore = defineStore('world', {
         bgm: dlc.bgm,
         presetCharacters: dlc.presetCharacters,
         characterFallback: dlc.characterFallback,
+        dlcLoreTitles: (dlc.lorebook ?? []).map((e) => (e.title ?? '').trim()).filter((t) => !!t),
       }
       await putWorld(world)
       this.worlds.unshift(world)
@@ -238,6 +239,7 @@ export const useWorldStore = defineStore('world', {
         sceneField?: string
         presetCharacters?: PresetCharacter[]
         characterFallback?: string
+        dlcLoreTitles?: string[]
       },
     ) {
       const w = this.worlds.find((x) => x.id === id)
@@ -251,6 +253,7 @@ export const useWorldStore = defineStore('world', {
         sceneField: meta.sceneField !== undefined ? meta.sceneField : w.sceneField,
         presetCharacters: meta.presetCharacters !== undefined ? meta.presetCharacters : w.presetCharacters,
         characterFallback: meta.characterFallback !== undefined ? meta.characterFallback : w.characterFallback,
+        dlcLoreTitles: meta.dlcLoreTitles !== undefined ? meta.dlcLoreTitles : w.dlcLoreTitles,
         updatedAt: Date.now(),
       }
       await putWorld(updated)
@@ -261,6 +264,7 @@ export const useWorldStore = defineStore('world', {
       w.sceneField = updated.sceneField
       w.presetCharacters = updated.presetCharacters
       w.characterFallback = updated.characterFallback
+      w.dlcLoreTitles = updated.dlcLoreTitles
       w.updatedAt = updated.updatedAt
     },
     exportWorld(id: string): unknown | null {

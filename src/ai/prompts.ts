@@ -570,7 +570,11 @@ export function buildActionPrompt(
   narrativeSpeed?: NarrativeSpeed,
   rules?: AdventureRules,
   loreCfg?: LoreInjectionConfig,
+  unseenNpc?: LoreEntry,
 ): string {
+  const unseenPart = unseenNpc
+    ? `\n\n【可能引出的人物】（玩家久未接触，不在当前活跃人物列表中）\n${stringifyCompact(unseenNpc)}\n若本轮剧情存在合理方式让此人自然出现（主动来信、被提及、在合适地点重逢等），可酌情引入以推进剧情；但必须符合其性格/身份/所在地点，来信或重逢须有合理由头。若只是一面之交、或逻辑上无合理方式出现，则忽略此人，切勿强行引入或制造巧合。`
+    : ''
   const lastPart = lastNarration ? `【上一轮剧情供衔接参考】\n${lastNarration}\n\n` : ''
   const activeNames = [
     ...(currentSave.activeLocations ?? []),
@@ -607,7 +611,7 @@ ${stringifyCompact(currentSave)}
 若当前存档表明角色尚未正式开场（characterProfile 极简或标注待补充、name/race 等关键字段为空或默认值、overview.impression 显示待补充等），本轮「玩家行动」应理解为「对角色设定的补充」而非正式行动：据此完善 characterProfile 与面板字段，然后生成正式的开场叙事并拉开序幕；若信息仍不足，继续友善追问需要补充的内容，不强行开始剧情。
 
 【玩家行动】
-${userInput}${speedText}${rulesPart}`
+${userInput}${speedText}${rulesPart}${unseenPart}`
 }
 
 // 系统消息（行动场景用到）
@@ -638,6 +642,7 @@ function buildActionRecoveryBase(
   lastNarration: string | undefined,
   includeSave: boolean,
   loreCfg?: LoreInjectionConfig,
+  unseenNpc?: LoreEntry,
 ): string {
   const activeNames = [
     ...(currentSave.activeLocations ?? []),
@@ -666,7 +671,10 @@ function buildActionRecoveryBase(
   const savePart = includeSave
     ? `${lastPart}【当前存档（须据此推进剧情并输出存档变化）】\n${stringifyCompact(currentSave)}\n\n`
     : lastPart
-  return `${lorePart}\n\n${savePart}【玩家行动】\n${userInput}`
+  const unseenPart = unseenNpc
+    ? `\n\n【可能引出的人物】（玩家久未接触，不在当前活跃人物列表中）\n${stringifyCompact(unseenNpc)}\n若本轮剧情存在合理方式让此人自然出现（主动来信、被提及、在合适地点重逢等），可酌情引入；但必须符合其性格/身份/所在地点，来信或重逢须有合理由头。若只是一面之交、或逻辑上无合理方式出现，则忽略此人，切勿强行引入或制造巧合。`
+    : ''
+  return `${lorePart}\n\n${savePart}【玩家行动】\n${userInput}${unseenPart}`
 }
 
 // JSON 语法硬性要求（截断恢复专用，简短版）
@@ -685,6 +693,7 @@ export function buildActionRecoverySplitNarrationPrompt(
   narrativeSpeed: NarrativeSpeed | undefined,
   rules?: AdventureRules,
   loreCfg?: LoreInjectionConfig,
+  unseenNpc?: LoreEntry,
 ): string {
   const speedPart = narrativeSpeed === 'fast' || narrativeSpeed === 'rapid'
     ? `\n- 叙事推进速度${narrativeSpeed === 'rapid' ? '·极速' : '·快速'}：省略过程细节，直接推进主线关键节点。`
@@ -698,7 +707,7 @@ export function buildActionRecoverySplitNarrationPrompt(
 }
 不要输出 loreUpdates 字段。
 
-${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true, loreCfg)}
+${buildActionRecoveryBase(world, currentSave, userInput, lastNarration, true, loreCfg, unseenNpc)}
 
 ${RECOVERY_JSON_RULE}${speedPart}${rulesPart}`
 }
