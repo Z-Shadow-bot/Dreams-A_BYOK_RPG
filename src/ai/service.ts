@@ -73,8 +73,9 @@ function normalizeSkill(v: unknown): Skill {
 // 物品对象带 remove: true 表示删除该名称的物品（不持久化）。
 // 这样即使模型漏输出部分物品，也不会把背包清空。
 function mergeItems(baseList: Item[], incoming: unknown): Item[] {
-  if (!Array.isArray(incoming)) return baseList.map((it) => ({ ...it }))
-  const out: Item[] = baseList.map((it) => ({ ...it }))
+  const base = Array.isArray(baseList) ? baseList : []
+  if (!Array.isArray(incoming)) return base.map((it) => ({ ...it }))
+  const out: Item[] = base.map((it) => ({ ...it }))
   for (const raw of incoming) {
     const it = (raw ?? {}) as Record<string, unknown>
     const name = asString(it.name).trim()
@@ -102,8 +103,9 @@ function mergeItems(baseList: Item[], incoming: unknown): Item[] {
 // 按技能名增量合并技能列表：AI 只列出本轮新增或变化的技能，未列出的保留原样；
 // 带 remove:true 表示删除该技能（不持久化）。避免漏输出导致清空。
 function mergeSkills(baseList: Skill[], incoming: unknown): Skill[] {
-  if (!Array.isArray(incoming)) return baseList.map((s) => ({ ...s }))
-  const out: Skill[] = baseList.map((s) => ({ ...s }))
+  const base = Array.isArray(baseList) ? baseList : []
+  if (!Array.isArray(incoming)) return base.map((s) => ({ ...s }))
+  const out: Skill[] = base.map((s) => ({ ...s }))
   for (const raw of incoming) {
     const s = (raw ?? {}) as Record<string, unknown>
     const name = asString(s.name).trim()

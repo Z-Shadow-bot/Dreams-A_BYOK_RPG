@@ -238,6 +238,8 @@ export const useAdventureStore = defineStore('adventure', {
       if (this.worldId !== worldId) return
       if (state && state.currentSave) {
         this.currentSave = state.currentSave
+        // 兼容旧存档（升级前无 skills 字段）：补齐，避免后续 mergeSkills/状态页访问 undefined
+        if (!Array.isArray(this.currentSave.skills)) this.currentSave.skills = []
         // 兜底：读档时若存档早于条目改名，用当前世界书校正 active 中的旧称呼
         syncActiveNamesWithLorebook(this.currentSave, useWorldStore().currentWorld?.lorebook)
         this.currentIndex = state.currentIndex

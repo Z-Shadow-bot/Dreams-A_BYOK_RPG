@@ -452,8 +452,8 @@ const characterList = computed(() => {
           </label>
           <section class="block">
             <h3 class="block-title">技能</h3>
-            <p v-if="save.skills.length === 0" class="muted">（空）</p>
-            <div v-for="(sk, i) in save.skills" :key="i" class="row bag-row" @dblclick="startEditSkill(i)">
+            <p v-if="(save.skills ?? []).length === 0" class="muted">（空）</p>
+            <div v-for="(sk, i) in (save.skills ?? [])" :key="i" class="row bag-row" @dblclick="startEditSkill(i)">
               <template v-if="editingSkill === i">
                 <input v-model="skillEditName" class="status-edit-input" placeholder="名称" />
                 <textarea v-model="skillEditDesc" class="status-edit-textarea" rows="3" placeholder="描述" />
