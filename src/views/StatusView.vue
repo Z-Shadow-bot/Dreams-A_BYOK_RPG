@@ -83,7 +83,7 @@ const skillEditDesc = ref('')
 
 function startEditSkill(index: number) {
   if (!editMode.value || !save.value) return
-  const sk = save.value.skills[index]
+  const sk = (save.value.skills ?? [])[index]
   if (!sk) return
   editingSkill.value = index
   skillEditName.value = sk.name
@@ -91,7 +91,7 @@ function startEditSkill(index: number) {
 }
 function saveEditSkill() {
   if (!save.value || editingSkill.value === null) return
-  const sk = save.value.skills[editingSkill.value]
+  const sk = (save.value.skills ?? [])[editingSkill.value]
   if (sk) {
     sk.name = skillEditName.value.trim() || sk.name
     sk.description = skillEditDesc.value
@@ -103,7 +103,7 @@ function cancelEditSkill() {
   editingSkill.value = null
 }
 function removeSkill(index: number) {
-  if (!save.value) return
+  if (!save.value || !save.value.skills) return
   save.value.skills.splice(index, 1)
   void adventure.persistState()
 }
