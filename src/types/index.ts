@@ -19,6 +19,13 @@ export interface InventoryData {
   items: Item[] // 普通物品栏（下）
 }
 
+// ===== 技能 =====
+export interface Skill {
+  name: string // 技能名称
+  description: string // 技能描述（能做到什么）
+  remove?: boolean // 删除标记（仅用于 AI 输出：设 remove:true 表示删除该技能；不持久化）
+}
+
 // ===== 地图 =====
 export interface MapLocation {
   name: string
@@ -52,6 +59,7 @@ export interface SaveData {
   activeCharacters?: string[] // 当前正在交互/即将见面的人物名称，对应世界书条目强制注入
   characterProfile: string // 角色设定（人设：出身、性格等相对稳定的背景，更新时需保持稳定）
   experience: string // 角色经历（冒险以来的经历概述，随剧情持续更新，与人设分开记录）
+  skills: Skill[] // 技能列表（角色能做到什么，全量传入；AI 按名称 diff 更新）
   overview: OverviewData
   hidden: Record<string, string> // 隐藏条目（状态页不显示，仅作 AI 参考）
   worldTime?: string // 世界时钟（自然语言，如"启程后第12天·深秋·入夜前"，AI 每轮维护，避免时间线错乱）
@@ -228,6 +236,7 @@ export function createEmptySave(panelSchema: PanelField[]): SaveData {
     activeCharacters: [],
     characterProfile: '',
     experience: '',
+    skills: [],
     overview: {
       impression: '',
       ongoing: '',

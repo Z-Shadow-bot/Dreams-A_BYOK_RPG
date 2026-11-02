@@ -9,7 +9,7 @@ const adventure = useAdventureStore()
 const worldStore = useWorldStore()
 const settings = useSettingsStore()
 
-const tabs = ['面板', '背包', '地图', '人物', '设定', '经历', '概述'] as const
+const tabs = ['面板', '背包', '技能', '地图', '人物', '设定', '经历', '概述'] as const
 type Tab = (typeof tabs)[number]
 const activeTab = ref<Tab>('面板')
 
@@ -73,6 +73,38 @@ function cancelEditItem() {
 function removeItem(type: 'equipment' | 'items', index: number) {
   if (!save.value) return
   save.value.inventory[type].splice(index, 1)
+  void adventure.persistState()
+}
+
+// 技能编辑（本地改写，直接改存档）
+const editingSkill = ref<number | null>(null)
+const skillEditName = ref('')
+const skillEditDesc = ref('')
+
+function startEditSkill(index: number) {
+  if (!editMode.value || !save.value) return
+  const sk = save.value.skills[index]
+  if (!sk) return
+  editingSkill.value = index
+  skillEditName.value = sk.name
+  skillEditDesc.value = sk.description
+}
+function saveEditSkill() {
+  if (!save.value || editingSkill.value === null) return
+  const sk = save.value.skills[editingSkill.value]
+  if (sk) {
+    sk.name = skillEditName.value.trim() || sk.name
+    sk.description = skillEditDesc.value
+  }
+  editingSkill.value = null
+  void adventure.persistState()
+}
+function cancelEditSkill() {
+  editingSkill.value = null
+}
+function removeSkill(index: number) {
+  if (!save.value) return
+  save.value.skills.splice(index, 1)
   void adventure.persistState()
 }
 
@@ -411,6 +443,33 @@ const characterList = computed(() => {
             </div>
           </section>
           </div>
+
+        <!-- 技能 -->
+        <div v-else-if="activeTab === '技能'" class="bag">
+          <label class="edit-toggle-row">
+            <input type="checkbox" v-model="editMode" />
+            <span>允许改写（开启后双击条目编辑）</span>
+          </label>
+          <section class="block">
+            <h3 class="block-title">技能</h3>
+            <p v-if="save.skills.length === 0" class="muted">（空）</p>
+            <div v-for="(sk, i) in save.skills" :key="i" class="row bag-row" @dblclick="startEditSkill(i)">
+              <template v-if="editingSkill === i">
+                <input v-model="skillEditName" class="status-edit-input" placeholder="名称" />
+                <textarea v-model="skillEditDesc" class="status-edit-textarea" rows="3" placeholder="描述" />
+                <div class="edit-actions">
+                  <button class="status-edit-btn save" @click="saveEditSkill">完成</button>
+                  <button class="status-edit-btn cancel" @click="cancelEditSkill">取消</button>
+                </div>
+              </template>
+              <template v-else>
+                <span class="bag-name">{{ sk.name }}</span>
+                <p v-if="sk.description" class="bag-state">{{ sk.description }}</p>
+                <button v-if="editMode" class="item-del-btn" @click.stop="removeSkill(i)">✕</button>
+              </template>
+            </div>
+          </section>
+        </div>
 
         <!-- 地图 -->
         <div v-else-if="activeTab === '地图'" class="list">

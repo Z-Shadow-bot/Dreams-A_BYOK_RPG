@@ -24,6 +24,7 @@ import type {
   MapLocation,
   PanelField,
   SaveData,
+  Skill,
   StoryPage,
   World,
 } from '@/types'
@@ -60,6 +61,14 @@ function normalizeItem(v: unknown): Item {
   }
 }
 
+function normalizeSkill(v: unknown): Skill {
+  const s = (v ?? {}) as Record<string, unknown>
+  return {
+    name: asString(s.name),
+    description: asString(s.description),
+  }
+}
+
 // 按物品名增量合并物品列表：AI 只需列出本轮新增或发生变化的物品，未列出的保留原样；
 // 物品对象带 remove: true 表示删除该名称的物品（不持久化）。
 // 这样即使模型漏输出部分物品，也不会把背包清空。
@@ -85,6 +94,33 @@ function mergeItems(baseList: Item[], incoming: unknown): Item[] {
       }
     } else {
       out.push(normalizeItem(it))
+    }
+  }
+  return out
+}
+
+// 按技能名增量合并技能列表：AI 只列出本轮新增或变化的技能，未列出的保留原样；
+// 带 remove:true 表示删除该技能（不持久化）。避免漏输出导致清空。
+function mergeSkills(baseList: Skill[], incoming: unknown): Skill[] {
+  if (!Array.isArray(incoming)) return baseList.map((s) => ({ ...s }))
+  const out: Skill[] = baseList.map((s) => ({ ...s }))
+  for (const raw of incoming) {
+    const s = (raw ?? {}) as Record<string, unknown>
+    const name = asString(s.name).trim()
+    if (!name) continue
+    const idx = out.findIndex((x) => (x.name ?? '').trim() === name)
+    if (s.remove === true) {
+      if (idx >= 0) out.splice(idx, 1)
+      continue
+    }
+    if (idx >= 0) {
+      const old = out[idx]
+      out[idx] = {
+        name: old.name,
+        description: typeof s.description === 'string' && s.description.trim() !== '' ? s.description : old.description,
+      }
+    } else {
+      out.push(normalizeSkill(s))
     }
   }
   return out
@@ -144,6 +180,7 @@ export function normalizeSave(raw: unknown, panelSchema: PanelField[]): SaveData
     activeCharacters: asStringArray(r.activeCharacters),
     characterProfile: asString(r.characterProfile),
     experience: asString(r.experience),
+    skills: (Array.isArray(r.skills) ? r.skills : []).map(normalizeSkill),
     overview: {
       impression: asString(r.overview?.impression),
       ongoing: asString(r.overview?.ongoing),
@@ -197,6 +234,7 @@ export function mergeSave(base: SaveData, raw: unknown, panelSchema: PanelField[
     if (Array.isArray(inv.equipment)) out.inventory.equipment = mergeItems(out.inventory.equipment, inv.equipment)
     if (Array.isArray(inv.items)) out.inventory.items = mergeItems(out.inventory.items, inv.items)
   }
+  if (Array.isArray(r.skills)) out.skills = mergeSkills(out.skills, r.skills)
   if (Array.isArray(r.map)) out.map = r.map.map(normalizeLocation)
   if (Array.isArray(r.characters)) out.characters = r.characters.map(normalizeCharacter)
   if (Array.isArray(r.activeLocations)) out.activeLocations = asStringArray(r.activeLocations)
@@ -463,6 +501,7 @@ export function applySavePatch(base: SaveData, patch: unknown): SaveData {
     if (Array.isArray(inv.equipment)) out.inventory.equipment = mergeItems(out.inventory.equipment, inv.equipment)
     if (Array.isArray(inv.items)) out.inventory.items = mergeItems(out.inventory.items, inv.items)
   }
+  if (Array.isArray(p.skills)) out.skills = mergeSkills(out.skills, p.skills)
   if (Array.isArray(p.map)) out.map = p.map.map(normalizeLocation)
   if (Array.isArray(p.characters)) out.characters = p.characters.map(normalizeCharacter)
   if (Array.isArray(p.activeLocations)) out.activeLocations = asStringArray(p.activeLocations)
