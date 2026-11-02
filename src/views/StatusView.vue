@@ -108,6 +108,23 @@ function removeSkill(index: number) {
   void adventure.persistState()
 }
 
+// 添加空条目（仅改写模式可用），添加后直接进入编辑态
+function addItem(type: 'equipment' | 'items') {
+  if (!editMode.value || !save.value) return
+  const list = save.value.inventory[type]
+  list.push({ name: '' })
+  void adventure.persistState()
+  startEditItem(type, list.length - 1)
+}
+function addSkill() {
+  if (!editMode.value || !save.value) return
+  if (!save.value.skills) save.value.skills = []
+  const list = save.value.skills
+  list.push({ name: '', description: '' })
+  void adventure.persistState()
+  startEditSkill(list.length - 1)
+}
+
 // 地图/人物条目本地改写（直接改对应世界书条目的 title/content）
 const editingLore = ref<{ type: 'location' | 'character' | 'lore'; title: string } | null>(null)
 const loreEditName = ref('')
@@ -409,6 +426,7 @@ const characterList = computed(() => {
           </label>
           <section class="block">
             <h3 class="block-title">装备</h3>
+            <button v-if="editMode" class="add-entry-btn" @click="addItem('equipment')">＋ 添加条目</button>
             <p v-if="save.inventory.equipment.length === 0" class="muted">（空）</p>
             <div v-for="(it, i) in save.inventory.equipment" :key="i" class="row bag-row" @dblclick="startEditItem('equipment', i)">
               <template v-if="editingItem && editingItem.type === 'equipment' && editingItem.index === i">
@@ -418,7 +436,7 @@ const characterList = computed(() => {
                 <button class="status-edit-btn cancel" @click="cancelEditItem">取消</button>
               </template>
               <template v-else>
-                <span class="bag-name">{{ it.name }}</span>
+                <span class="bag-name">{{ it.name || '（未命名）' }}</span>
                 <p v-if="it.state" class="bag-state">{{ it.state }}</p>
                 <button v-if="editMode" class="item-del-btn" @click.stop="removeItem('equipment', i)">✕</button>
               </template>
@@ -426,6 +444,7 @@ const characterList = computed(() => {
           </section>
           <section class="block">
             <h3 class="block-title">物品</h3>
+            <button v-if="editMode" class="add-entry-btn" @click="addItem('items')">＋ 添加条目</button>
             <p v-if="save.inventory.items.length === 0" class="muted">（空）</p>
             <div v-for="(it, i) in save.inventory.items" :key="i" class="row bag-row" @dblclick="startEditItem('items', i)">
               <template v-if="editingItem && editingItem.type === 'items' && editingItem.index === i">
@@ -436,7 +455,7 @@ const characterList = computed(() => {
                 <button class="status-edit-btn cancel" @click="cancelEditItem">取消</button>
               </template>
               <template v-else>
-                <span class="bag-name">{{ it.name }}{{ it.quantity ? ` ×${it.quantity}` : '' }}</span>
+                <span class="bag-name">{{ it.name || '（未命名）' }}{{ it.quantity ? ` ×${it.quantity}` : '' }}</span>
                 <p v-if="it.state" class="bag-state">{{ it.state }}</p>
                 <button v-if="editMode" class="item-del-btn" @click.stop="removeItem('items', i)">✕</button>
               </template>
@@ -452,6 +471,7 @@ const characterList = computed(() => {
           </label>
           <section class="block">
             <h3 class="block-title">技能</h3>
+            <button v-if="editMode" class="add-entry-btn" @click="addSkill()">＋ 添加条目</button>
             <p v-if="(save.skills ?? []).length === 0" class="muted">（空）</p>
             <div v-for="(sk, i) in (save.skills ?? [])" :key="i" class="row bag-row" @dblclick="startEditSkill(i)">
               <template v-if="editingSkill === i">
@@ -463,7 +483,7 @@ const characterList = computed(() => {
                 </div>
               </template>
               <template v-else>
-                <span class="bag-name">{{ sk.name }}</span>
+                <span class="bag-name">{{ sk.name || '（未命名）' }}</span>
                 <p v-if="sk.description" class="bag-state">{{ sk.description }}</p>
                 <button v-if="editMode" class="item-del-btn" @click.stop="removeSkill(i)">✕</button>
               </template>
@@ -800,6 +820,22 @@ const characterList = computed(() => {
   color: var(--muted);
   font-weight: 600;
   margin-bottom: 10px;
+}
+.add-entry-btn {
+  display: block;
+  width: 100%;
+  margin: -6px 0 10px;
+  padding: 6px 0;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.add-entry-btn:hover {
+  color: var(--active);
+  border-color: var(--active);
 }
 .row {
   display: flex;
