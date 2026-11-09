@@ -251,8 +251,13 @@ function next() {
 function goLatest() {
   adventure.setPage(adventure.pages.length - 1)
 }
+// 点击行动选项：不再立即发送，而是复制到下方输入框，方便玩家修改后再发送
+const actionInputEl = ref<HTMLTextAreaElement | null>(null)
 function choose(option: string) {
-  adventure.takeAction(option)
+  input.value = option
+  void nextTick(() => {
+    actionInputEl.value?.focus()
+  })
 }
 async function submit() {
   if (adventure.loading) return
@@ -444,6 +449,7 @@ async function rollback() {
         </button>
         <div class="input-row">
           <textarea
+            ref="actionInputEl"
             v-model="input"
             class="input"
             rows="3"

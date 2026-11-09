@@ -188,6 +188,33 @@ export function extractJson(text: string): unknown {
   }
 }
 
+// 根据「深度思考」开关与模型名称，为请求追加各服务商的思考/推理参数。
+// 关闭时：DeepSeek 默认开启思考（content 可能为空），显式关闭以直接输出最终回答。
+// 开启时：按模型关键词匹配，追加对应服务商的思考模式参数。
+function applyThinking(payload: Record<string, unknown>, model: string, deepThink: boolean): void {
+  const m = model.toLowerCase()
+  if (!deepThink) {
+    if (/deepseek/i.test(m)) payload.thinking = { type: 'disabled' }
+    return
+  }
+  if (/deepseek/i.test(m)) {
+    // DeepSeek：reasoner / 支持思考的模型
+    payload.thinking = { type: 'enabled' }
+  } else if (/qwen/i.test(m)) {
+    // 通义千问 Qwen3 系列：enable_thinking
+    payload.enable_thinking = true
+  } else if (/glm/i.test(m)) {
+    // 智谱 GLM-4.5+：thinking
+    payload.thinking = { type: 'enabled' }
+  } else if (/gemini/i.test(m)) {
+    // Google Gemini（OpenAI 兼容层）：reasoning_effort 控制思考深度
+    payload.reasoning_effort = 'high'
+  } else if (/gpt|openai|o1|o3|o4|o5/i.test(m)) {
+    // OpenAI 推理模型（o 系列 / GPT-5）：reasoning_effort
+    payload.reasoning_effort = 'medium'
+  }
+}
+
 // 核心调用：组装请求 → CapacitorHttp 原生直连 → 返回 AI 文本
 export async function chat(messages: ChatMessage[], config: APIConfig): Promise<string> {
   const key = await getApiKey()
@@ -208,10 +235,7 @@ export async function chat(messages: ChatMessage[], config: APIConfig): Promise<
     stream: false,
     response_format: { type: 'json_object' },
   }
-  // DeepSeek 默认开启思考模式（content 可能为空），显式关闭以直接输出最终回答
-  if (/deepseek/i.test(config.model)) {
-    payload.thinking = { type: 'disabled' }
-  }
+  applyThinking(payload, config.model, !!config.deepThink)
 
   // 最大等待时间由用户在「我的」页面设置，默认 180 秒
   const waitSeconds = config.maxWaitTime && config.maxWaitTime > 0 ? config.maxWaitTime : 180

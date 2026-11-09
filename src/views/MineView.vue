@@ -21,6 +21,7 @@ const form = reactive({
   maxWaitTime: 180,
   narrationMin: 200,
   narrationMax: 500,
+  deepThink: false,
 })
 
 const isWideTemp = computed(
@@ -92,6 +93,7 @@ async function switchProfile(id: string) {
   form.maxWaitTime = settings.config.maxWaitTime ?? 180
   form.narrationMin = settings.config.narrationMin ?? 200
   form.narrationMax = settings.config.narrationMax ?? 500
+  form.deepThink = settings.config.deepThink ?? false
   apiKey.value = key
   saved.value = true
   setTimeout(() => (saved.value = false), 2000)
@@ -159,6 +161,7 @@ async function saveAsProfile() {
       maxWaitTime,
       narrationMin,
       narrationMax,
+      deepThink: form.deepThink,
     },
     apiKey.value,
   )
@@ -245,6 +248,7 @@ onMounted(async () => {
   form.maxWaitTime = settings.config.maxWaitTime ?? 180
   form.narrationMin = settings.config.narrationMin ?? 200
   form.narrationMax = settings.config.narrationMax ?? 500
+  form.deepThink = settings.config.deepThink ?? false
   devMode.value = settings.devMode
 
   // PWA 端：申请持久化存储并展示用量，降低浏览器自动清理丢失存档的概率
@@ -315,6 +319,7 @@ async function save() {
       maxWaitTime,
       narrationMin,
       narrationMax,
+      deepThink: form.deepThink,
     })
     if (apiKey.value.trim()) {
       await settings.setApiKey(apiKey.value.trim())
@@ -462,6 +467,15 @@ async function doClearLog() {
           </div>
           <p class="setting-hint">{{ temperatureHint }}</p>
         </div>
+
+        <label class="dev-row deep-think-row">
+          <input type="checkbox" v-model="form.deepThink" />
+          <span>深度思考</span>
+        </label>
+        <p class="setting-hint standalone">
+          开启后根据模型名称自动追加思考/推理参数（支持 DeepSeek、通义千问、GLM、GPT、Gemini）；默认关闭。
+          注意：GPT / Gemini 的思考模式需要选用支持推理的模型，否则可能报错。
+        </p>
 
         <p v-if="error" class="error">{{ error }}</p>
         <button class="save-btn" @click="save">{{ saved ? '已保存 ✓' : '保存配置' }}</button>
@@ -906,6 +920,11 @@ async function doClearLog() {
   width: 16px;
   height: 16px;
   cursor: pointer;
+}
+.deep-think-row {
+  margin-top: 14px;
+  font-weight: 600;
+  color: var(--text);
 }
 .truncate-group {
   margin-top: 14px;

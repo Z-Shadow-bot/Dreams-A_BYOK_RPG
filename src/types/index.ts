@@ -107,6 +107,8 @@ export interface World {
   characterFallback?: string // 角色来源兜底：玩家创建的角色不符合世界规则时的兜底处理，仅在创建角色（开始冒险）时注入，不在后续行动中使用
   loreLimit?: number // 单轮注入的世界书最大匹配条目数（默认 12；越大每轮消耗 token 越多，生成越慢）
   dlcLoreTitles?: string[] // DLC 初始世界书条目的 title 列表（更新 DLC 时用于区分初始条目与玩家添加条目）
+  sourceId?: string // 导入世界的源 id（用于后续导入同一源世界时识别为「更新」而非「新建」）
+  baseLoreTitles?: string[] // 分享/导入世界的基线条目 title 列表（导入更新时区分基线条目与玩家新增条目，作用同 dlcLoreTitles）
 }
 
 // ===== 预设角色（DLC 提供的可选起始角色） =====
@@ -187,6 +189,7 @@ export interface APIConfig {
   maxWaitTime: number // 最大等待时间（秒），对应网络请求读取超时
   narrationMin?: number // 每轮叙事字数下限
   narrationMax?: number // 每轮叙事字数上限
+  deepThink?: boolean // 深度思考：开启后按模型类型追加思考/推理参数（DeepSeek/Qwen/GLM/GPT/Gemini）
 }
 
 // ===== 我的 API（保存多个配置，快速切换；apiKey 独立存 Keystore） =====
@@ -200,6 +203,7 @@ export interface ApiProfile {
   maxWaitTime: number
   narrationMin: number
   narrationMax: number
+  deepThink?: boolean // 深度思考开关
 }
 
 // ===== AI 请求 / 响应 =====

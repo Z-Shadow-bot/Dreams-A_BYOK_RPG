@@ -42,6 +42,7 @@ const DEFAULT_CONFIG: APIConfig = {
   maxWaitTime: 180,
   narrationMin: 200,
   narrationMax: 500,
+  deepThink: false,
 }
 
 export type TruncateStrategy = 'diff' | 'split'
@@ -283,6 +284,7 @@ export const useSettingsStore = defineStore('settings', {
         maxWaitTime: p.maxWaitTime,
         narrationMin: p.narrationMin ?? 200,
         narrationMax: p.narrationMax ?? 500,
+        deepThink: p.deepThink ?? false,
       })
       const key = await getProfileKey(id)
       if (key) {

@@ -157,6 +157,24 @@ async function doCreate() {
   }
 }
 
+// 创建空世界：不调用 AI，直接创建一个面板/核心设定/世界书全空的世界，供完全手动创建的玩家使用
+async function createEmptyWorld() {
+  createError.value = ''
+  try {
+    const name = newName.value.trim() || '未命名世界'
+    const world = await worldStore.createWorld(name, '', [], [])
+    showCreate.value = false
+    newName.value = ''
+    newDesc.value = ''
+    // 切换冒险上下文到新世界（空世界无存档，冒险页会回到「开始冒险」状态），避免残留上一个世界的存档
+    await adventure.open(world.id)
+    // 直接打开设定页，方便玩家从零开始填写
+    openEdit(world)
+  } catch (e) {
+    createError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
 function formatTime(t: number): string {
   return new Date(t).toLocaleString('zh-CN', { hour12: false })
 }
@@ -350,6 +368,21 @@ async function importWorldFile() {
   try {
     const text = await pickJSONFile()
     const data = JSON.parse(text)
+    // 若存在同源世界（id 相同），询问是「更新（保留存档）」还是「新建」
+    const sourceId = typeof data?.id === 'string' && data.id.trim() ? data.id.trim() : undefined
+    const existing = worldStore.findImportedWorld(sourceId)
+    if (existing) {
+      const update = window.confirm(
+        `已存在同源世界「${existing.name}」。\n\n确定 = 更新该世界的设定、面板与世界书，保留当前冒险存档\n取消 = 创建全新世界`,
+      )
+      if (update) {
+        await worldStore.updateImportedWorld(existing.id, data)
+        worldStore.selectWorld(existing.id)
+        await adventure.open(existing.id)
+        await adventure.renormalize()
+        return
+      }
+    }
     await worldStore.importWorld(data)
     await adventure.open(worldStore.currentWorldId)
   } catch (e) {
@@ -518,7 +551,10 @@ async function doImportDlc() {
 
     <div v-if="showCreate" class="modal-mask" @click.self="showCreate = false">
       <div class="modal">
-        <h2>创建新世界</h2>
+        <div class="modal-title-row">
+          <h2>创建新世界</h2>
+          <button class="empty-world-btn" @click="createEmptyWorld">创建空世界</button>
+        </div>
         <label class="field-label">世界名称（可选）</label>
         <input v-model="newName" class="input" placeholder="例如：末日废土、仙侠大陆…" />
         <label class="field-label">世界设定 / 创意描述</label>
@@ -801,6 +837,26 @@ async function doImportDlc() {
 .modal h2 {
   font-size: 18px;
   margin-bottom: 16px;
+}
+.modal-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.modal-title-row h2 {
+  margin-bottom: 0;
+}
+.empty-world-btn {
+  flex: none;
+  background: var(--surface-2);
+  color: var(--active);
+  border: 1px solid var(--active);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
 }
 .field-label {
   display: block;

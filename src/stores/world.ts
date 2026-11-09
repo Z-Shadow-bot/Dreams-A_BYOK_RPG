@@ -21,6 +21,48 @@ export function normalizeImportedLorebook(raw: unknown[]): LoreEntry[] {
   return result
 }
 
+// 解析并归一化「导出世界」JSON，返回可用的世界数据（含源 id）。
+// 允许面板字段为空数组（对应「创建空世界」导出的世界），仅当 panelSchema 存在但非数组时报错。
+interface ParsedWorldData {
+  name: string
+  worldSetting: string
+  lorebook: LoreEntry[]
+  panelSchema: PanelField[]
+  sourceId: string | undefined
+}
+
+function parseWorldJson(raw: unknown): ParsedWorldData {
+  const data = raw as Record<string, any>
+  if (!data || data.type !== 'dreams-world') {
+    throw new Error('无效的世界设定文件')
+  }
+  const name = typeof data.name === 'string' && data.name.trim() ? data.name : '导入的世界'
+  const worldSetting = typeof data.worldSetting === 'string' ? data.worldSetting : ''
+  const lorebook = Array.isArray(data.lorebook) ? normalizeImportedLorebook(data.lorebook) : []
+  const rawSchema = Array.isArray(data.panelSchema) ? data.panelSchema : []
+  if (data.panelSchema !== undefined && !Array.isArray(data.panelSchema)) {
+    throw new Error('无效的角色面板字段')
+  }
+  const seen = new Set<string>()
+  const panelSchema: PanelField[] = []
+  for (const item of rawSchema) {
+    const f = item as Record<string, unknown>
+    if (!f || typeof f.key !== 'string' || typeof f.label !== 'string') continue
+    const key = f.key.trim()
+    const label = f.label.trim()
+    if (!key || !label || seen.has(key)) continue
+    seen.add(key)
+    panelSchema.push({
+      key,
+      label,
+      type: f.type === 'number' ? 'number' : 'text',
+      unit: typeof f.unit === 'string' && f.unit.trim() ? f.unit.trim() : undefined,
+    })
+  }
+  const sourceId = typeof data.id === 'string' && data.id.trim() ? data.id.trim() : undefined
+  return { name, worldSetting, lorebook, panelSchema, sourceId }
+}
+
 export const useWorldStore = defineStore('world', {
   state: () => ({
     worlds: [] as World[],
@@ -76,6 +118,7 @@ export const useWorldStore = defineStore('world', {
         lorebook: JSON.parse(JSON.stringify(lorebook)) as LoreEntry[],
         panelSchema: JSON.parse(JSON.stringify(panelSchema)) as PanelField[],
       },
+      baseLoreTitles: (lorebook ?? []).map((e) => (e.title ?? '').trim()).filter((t) => !!t),
     }
     await putWorld(world)
     this.worlds.unshift(world)
@@ -273,43 +316,83 @@ export const useWorldStore = defineStore('world', {
       return {
         type: 'dreams-world',
         version: 1,
+        // 用 sourceId ?? id 作为稳定的世界标识，保证「导出 → 他人导入 → 作者更新后再导出 → 他人再导入」能识别为同一世界
+        id: w.sourceId ?? w.id,
         name: w.name,
         worldSetting: w.worldSetting,
         lorebook: w.lorebook ? JSON.parse(JSON.stringify(w.lorebook)) : [],
         panelSchema: w.panelSchema,
       }
     },
+    // 查找与某个源 id 对应的已存在世界（按本地 id 或 sourceId 匹配）
+    findImportedWorld(sourceId: string | undefined): World | null {
+      if (!sourceId) return null
+      return this.worlds.find((w) => w.id === sourceId || w.sourceId === sourceId) ?? null
+    },
     async importWorld(raw: unknown): Promise<World> {
-      const data = raw as Record<string, any>
-      if (!data || data.type !== 'dreams-world') {
-        throw new Error('无效的世界设定文件')
+      const { name, worldSetting, lorebook, panelSchema, sourceId } = parseWorldJson(raw)
+      const world = await this.createWorld(name, worldSetting, panelSchema, lorebook)
+      if (sourceId && sourceId !== world.id) {
+        world.sourceId = sourceId
+        await putWorld(world)
       }
-      const name = typeof data.name === 'string' && data.name.trim() ? data.name : '导入的世界'
-      const worldSetting = typeof data.worldSetting === 'string' ? data.worldSetting : ''
-      const lorebook = Array.isArray(data.lorebook)
-        ? normalizeImportedLorebook(data.lorebook)
-        : []
-      const rawSchema = Array.isArray(data.panelSchema) ? data.panelSchema : []
-      const seen = new Set<string>()
-      const panelSchema: PanelField[] = []
-      for (const item of rawSchema) {
-        const f = item as Record<string, unknown>
-        if (!f || typeof f.key !== 'string' || typeof f.label !== 'string') continue
-        const key = f.key.trim()
-        const label = f.label.trim()
-        if (!key || !label || seen.has(key)) continue
-        seen.add(key)
-        panelSchema.push({
-          key,
-          label,
-          type: f.type === 'number' ? 'number' : 'text',
-          unit: typeof f.unit === 'string' && f.unit.trim() ? f.unit.trim() : undefined,
-        })
+      return world
+    },
+    // 更新已导入的世界（沿用 DLC 更新合并逻辑）：
+    //  - 基线条目：fixed 用新版覆盖，非 fixed 保留玩家版
+    //  - 玩家新增条目（不在旧基线内）保留；新版新增条目加入、删除的基线条目移除
+    //  - panelSchema 保留玩家新增字段，DLC/预设字段用新版
+    async updateImportedWorld(id: string, raw: unknown): Promise<void> {
+      const { worldSetting, lorebook: newLore, panelSchema: newSchema } = parseWorldJson(raw)
+      const w = this.worlds.find((x) => x.id === id)
+      if (!w) throw new Error('要更新的世界不存在')
+
+      const oldLore = w.lorebook ?? []
+      const oldBaseTitles = new Set<string>()
+      if (Array.isArray(w.baseLoreTitles)) {
+        // 新世界：baseLoreTitles 为创建/上次导入时的基线条目标题（可能为空数组，表示无基线）
+        for (const t of w.baseLoreTitles) {
+          const tt = (t ?? '').trim()
+          if (tt) oldBaseTitles.add(tt)
+        }
+      } else {
+        // 旧世界（升级前）无 baseLoreTitles 字段：回退用当前世界书标题作为基线
+        for (const e of oldLore) {
+          const t = (e.title ?? '').trim()
+          if (t) oldBaseTitles.add(t)
+        }
       }
-      if (panelSchema.length === 0) {
-        throw new Error('无效的角色面板字段')
+      const newTitles = new Set(newLore.map((e) => (e.title ?? '').trim()).filter(Boolean))
+      const oldByTitle = new Map<string, LoreEntry>()
+      for (const e of oldLore) {
+        const t = (e.title ?? '').trim()
+        if (t) oldByTitle.set(t, e)
       }
-      return this.createWorld(name, worldSetting, panelSchema, lorebook)
+      const mergedLore: LoreEntry[] = []
+      for (const e of newLore) {
+        const t = (e.title ?? '').trim()
+        const old = t ? oldByTitle.get(t) : undefined
+        // 非 fixed 且旧世界已有同名 → 保留玩家版；否则采用新版
+        mergedLore.push(old && e.fixed !== true ? old : e)
+      }
+      for (const e of oldLore) {
+        const t = (e.title ?? '').trim()
+        if (!t || oldBaseTitles.has(t) || newTitles.has(t)) continue
+        mergedLore.push(e) // 玩家新增的条目，保留
+      }
+      const newKeys = new Set(newSchema.map((f) => f.key))
+      const mergedSchema = [...newSchema, ...(w.panelSchema ?? []).filter((f) => !newKeys.has(f.key))]
+
+      const updated: World = {
+        ...w,
+        worldSetting,
+        lorebook: mergedLore,
+        panelSchema: mergedSchema,
+        baseLoreTitles: newLore.map((e) => (e.title ?? '').trim()).filter(Boolean),
+        updatedAt: Date.now(),
+      }
+      await putWorld(updated)
+      Object.assign(w, updated)
     },
   },
 })

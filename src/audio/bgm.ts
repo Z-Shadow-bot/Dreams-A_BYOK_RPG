@@ -14,6 +14,10 @@ let muted = false
 
 const webAudioMap = new Map<string, HTMLAudioElement>()
 
+// 记录每个场景（dlcId/scene）上一次选中的曲目，避免在多候选场景下，
+// 因状态页/冒险页来回切换导致 currentKey/loadingKey 短暂为空而重新随机
+const sceneTrack = new Map<string, string>()
+
 function sanitizeAssetId(s: string): string {
   return s.replace(/[^a-zA-Z0-9_-]/g, '_')
 }
@@ -206,16 +210,32 @@ export async function playSceneBgm(world: World | null, scene: string | undefine
     return
   }
   const candidates = raw.split('|').map((s) => s.trim()).filter(Boolean)
-  // 若当前正在播放的曲目属于本场景候选集（且同 DLC），则保持不变——
+  if (candidates.length === 0) {
+    console.log(`[bgm] playSceneBgm: scene "${scene}" 候选集为空，调stopBgm`)
+    await stopBgm()
+    return
+  }
+  // 若当前正在播放（或正在加载）的曲目属于本场景候选集（且同 DLC），则保持不变——
   // 避免路由切换/状态页切换重新进入冒险页时，对多候选场景重新随机
-  const currentParts = currentKey ? currentKey.split('/') : []
+  const current = currentKey ?? loadingKey
+  const currentParts = current ? current.split('/') : []
   const currentDlcId = currentParts[0]
   const currentBasename = currentParts.slice(1).join('/')
   if (currentDlcId === world.dlcId && currentBasename && candidates.includes(currentBasename)) {
     console.log(`[bgm] playSceneBgm: 当前曲目 ${currentBasename} 属于本场景候选集，保持不变`)
     return
   }
-  const basename = candidates.length > 1 ? candidates[Math.floor(Math.random() * candidates.length)] : candidates[0] ?? raw
+  // 其次沿用本场景上次选中的曲目（若仍在候选集内）；只有第一次进入该场景才随机挑选，
+  // 这样即使切换页面导致 currentKey/loadingKey 被清空，也不会重新随机
+  const trackKey = `${world.dlcId}/${scene}`
+  let basename: string
+  const remembered = sceneTrack.get(trackKey)
+  if (remembered && candidates.includes(remembered)) {
+    basename = remembered
+  } else {
+    basename = candidates.length > 1 ? candidates[Math.floor(Math.random() * candidates.length)] : candidates[0] ?? raw
+    sceneTrack.set(trackKey, basename)
+  }
   const cacheKey = `${world.dlcId}/${basename}`
   if (currentKey === cacheKey) { console.log('[bgm] playSceneBgm: 已在播放同一曲目，跳过'); return }
   if (loadingKey === cacheKey) { console.log('[bgm] playSceneBgm: 正在加载同一曲目，跳过'); return }
@@ -275,5 +295,8 @@ export function clearBgmCache(dlcId: string): void {
   const prefix = `${dlcId}/`
   for (const key of uriCache.keys()) {
     if (key.startsWith(prefix)) uriCache.delete(key)
+  }
+  for (const key of sceneTrack.keys()) {
+    if (key.startsWith(prefix)) sceneTrack.delete(key)
   }
 }
