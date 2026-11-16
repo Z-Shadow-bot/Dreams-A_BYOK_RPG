@@ -8,7 +8,7 @@ import {
 
   buildActionRecoverySplitNarrationPrompt,
   buildActionRecoverySplitSavePrompt,
-  buildRewriteSyncPrompt,
+  buildLoreCompressPrompt,
   buildOptionsFallbackPrompt,
   type AdventureRules,
   type LoreInjectionConfig,
@@ -25,7 +25,6 @@ import type {
   PanelField,
   SaveData,
   Skill,
-  StoryPage,
   World,
 } from '@/types'
 import { createId } from '@/types'
@@ -208,110 +207,36 @@ function lockProfileIfNeeded(save: SaveData, base: SaveData): SaveData {
   return save
 }
 
-// 将 AI 返回的存档与当前存档智能合并（字段级增量更新）：
-// AI 返回了某字段 → 用 AI 的值覆盖；未返回 → 保留旧值。
-// 这样即使模型在某轮漏填/漏返回部分字段，也不会清空面板、背包、地图、人物等已有数据。
-// 明确表示"清空"只需要 AI 返回空字符串或空数组。
-export function mergeSave(base: SaveData, raw: unknown, panelSchema: PanelField[]): SaveData {
-  const out: SaveData = JSON.parse(JSON.stringify(base)) as SaveData
-  const r = (raw ?? {}) as Record<string, any>
-
-  // 面板：仅覆盖 AI 明确返回的键，未返回的键保留原值
-  if (r.panel && typeof r.panel === 'object' && !Array.isArray(r.panel)) {
-    const rp = r.panel as Record<string, unknown>
-    for (const f of panelSchema) {
-      const v = rp[f.key]
-      if (typeof v === 'number' && Number.isFinite(v)) {
-        ;(out.panel as Record<string, string | number>)[f.key] = f.type === 'number' ? v : String(v)
-      } else if (typeof v === 'string' && v.trim() !== '') {
-        const n = Number(v)
-        ;(out.panel as Record<string, string | number>)[f.key] = f.type === 'number' && Number.isFinite(n) ? n : v
-      }
-    }
-  }
-
-  // 数组字段：AI 明确返回数组才整体替换（缺失 = 未更新；空数组 = 明确清空）
-  if (r.inventory && typeof r.inventory === 'object' && !Array.isArray(r.inventory)) {
-    const inv = r.inventory as Record<string, unknown>
-    if (Array.isArray(inv.equipment)) out.inventory.equipment = mergeItems(out.inventory.equipment, inv.equipment)
-    if (Array.isArray(inv.items)) out.inventory.items = mergeItems(out.inventory.items, inv.items)
-  }
-  if (Array.isArray(r.skills)) out.skills = mergeSkills(out.skills, r.skills)
-  if (Array.isArray(r.map)) out.map = r.map.map(normalizeLocation)
-  if (Array.isArray(r.characters)) out.characters = r.characters.map(normalizeCharacter)
-  if (Array.isArray(r.activeLocations)) out.activeLocations = asStringArray(r.activeLocations)
-  if (Array.isArray(r.activeCharacters)) out.activeCharacters = asStringArray(r.activeCharacters)
-
-  // 成段文本字段：AI 返回非空字符串才覆盖（空字符串与缺失都视为未更新，避免误清空设定/经历/概览/时间）
-  if (typeof r.characterProfile === 'string' && r.characterProfile.trim() !== '') out.characterProfile = r.characterProfile
-  if (typeof r.experience === 'string' && r.experience.trim() !== '') out.experience = r.experience
-  if (typeof r.worldTime === 'string' && r.worldTime.trim() !== '') out.worldTime = r.worldTime
-
-  // 概览：逐项合并
-  if (r.overview && typeof r.overview === 'object' && !Array.isArray(r.overview)) {
-    const o = r.overview as Record<string, unknown>
-    if (typeof o.impression === 'string' && o.impression.trim() !== '') out.overview.impression = o.impression
-    if (typeof o.ongoing === 'string' && o.ongoing.trim() !== '') out.overview.ongoing = o.ongoing
-    if (Array.isArray(o.recentEvents)) {
-      out.overview.recentEvents = o.recentEvents.filter((x): x is string => typeof x === 'string')
-    }
-    if (typeof o.latestProgress === 'string' && o.latestProgress.trim() !== '') out.overview.latestProgress = o.latestProgress
-  }
-
-  // 隐藏记录：AI 返回对象才应用（支持 add/remove 指令或整体对象）
-  if (r.hidden && typeof r.hidden === 'object' && !Array.isArray(r.hidden)) {
-    const h = r.hidden as Record<string, any>
-    if (h.add && typeof h.add === 'object' && !Array.isArray(h.add)) {
-      for (const [k, v] of Object.entries(h.add as Record<string, unknown>)) {
-        if (typeof v === 'string') out.hidden[k] = v
-        else if (v !== undefined && v !== null) {
-          try {
-            out.hidden[k] = JSON.stringify(v)
-          } catch {
-            // 不可序列化的值忽略
-          }
-        }
-      }
-    }
-    if (Array.isArray(h.remove)) {
-      for (const k of h.remove) {
-        if (typeof k === 'string') delete out.hidden[k]
-      }
-    }
-    if (!h.add && !h.remove) {
-      for (const [k, v] of Object.entries(h)) {
-        if (typeof v === 'string') out.hidden[k] = v
-        else if (v !== undefined && v !== null) {
-          try {
-            out.hidden[k] = JSON.stringify(v)
-          } catch {
-            // 不可序列化的值忽略
-          }
-        }
-      }
-    }
-  }
-
-  return out
+// 布尔字段三态：未提供 → undefined（合并时保留旧值）；显式 true / false → 覆盖
+function asTriBool(v: unknown): boolean | undefined {
+  if (v === true) return true
+  if (v === false) return false
+  return undefined
 }
 
 // 归一化单条世界书条目（AI 返回无 id，由这里分配）
 // remove 标记：仅当条目完全重复或记录错误时 AI 返回 { title, remove: true } 表示删除该条目（无需 content）
+// 内容级增量：支持 appendContent / appendTo / removeLines（无 content 时为纯增量更新）
 function normalizeLoreEntry(v: unknown): LoreEntry | null {
   const e = (v ?? {}) as Record<string, unknown>
   const title = asString(e.title).trim()
   // 删除条目：仅完全重复或记录错误时使用，只需 title + remove 标记，不需要 content
   if (e.remove === true && title) {
-    return {
-      id: createId(),
-      title,
-      tags: [],
-      content: '',
-      remove: true,
-    }
+    return { id: createId(), title, tags: [], content: '', remove: true }
   }
   const content = asString(e.content).trim()
-  if (!content) return null
+  const appendContent = asString(e.appendContent).trim()
+  const appendTo = asString(e.appendTo).trim() || undefined
+  const removeLines = Array.isArray(e.removeLines)
+    ? e.removeLines
+        .filter((x): x is string => typeof x === 'string')
+        .map((x) => x.trim())
+        .filter((x) => !!x)
+    : undefined
+  const hasDelta = !!appendContent || (removeLines ? removeLines.length > 0 : false)
+  // 纯内容增量更新：允许无 content，但必须有 title（用于匹配已有条目）；新增条目则必须有 content
+  if (!content && !hasDelta) return null
+  if (!content && !title) return null
   const tags = asStringArray(e.tags).map((t) => t.trim()).filter((t) => !!t)
   const aliases = asStringArray(e.aliases).map((t) => t.trim()).filter((t) => !!t)
   return {
@@ -320,14 +245,73 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
     aliases: aliases.length > 0 ? aliases : undefined,
     tags,
     content,
-    required: !!e.required,
-    fixed: e.fixed === true ? true : undefined,
-    links: asStringArray(e.links).map((t) => t.trim()).filter((t) => !!t),
-    hidden: e.hidden === true ? true : undefined,
-    isLocation: e.isLocation === true ? true : undefined,
-    isCharacter: e.isCharacter === true ? true : undefined,
+    required: asTriBool(e.required),
+    fixed: asTriBool(e.fixed),
+    links: Array.isArray(e.links)
+      ? asStringArray(e.links).map((t) => t.trim()).filter((t) => !!t)
+      : undefined,
+    hidden: asTriBool(e.hidden),
+    isLocation: asTriBool(e.isLocation),
+    isCharacter: asTriBool(e.isCharacter),
     lastVisitedTime: asString(e.lastVisitedTime).trim() || undefined,
+    appendContent: appendContent || undefined,
+    appendTo,
+    removeLines: removeLines && removeLines.length > 0 ? removeLines : undefined,
   }
+}
+
+// 世界书条目内容级 diff：在旧 content 基础上应用增量（全量替换 / 删除行 / 追加到栏目或末尾）
+export function applyLoreContentDelta(oldContent: string, u: LoreEntry): string {
+  // 1) 完整替换优先
+  const full = typeof u.content === 'string' ? u.content.trim() : ''
+  if (full) return full
+  let content = oldContent ?? ''
+  // 2) 删除包含指定子串的行
+  const removeLines = Array.isArray(u.removeLines) ? u.removeLines.filter((s) => typeof s === 'string' && s.trim()) : []
+  if (removeLines.length > 0) {
+    content = content
+      .split('\n')
+      .filter((line) => !removeLines.some((m) => line.includes(m.trim())))
+      .join('\n')
+  }
+  // 3) 追加（可指定栏目：插入到该【栏目】区段末尾）
+  const append = typeof u.appendContent === 'string' ? u.appendContent.trim() : ''
+  if (append) {
+    const section = typeof u.appendTo === 'string' ? u.appendTo.trim() : ''
+    content = section ? insertIntoSection(content, section, append) : content ? `${content}\n${append}` : append
+  }
+  return content
+}
+
+// 判断某一行是否是栏目标题（【xxx】 或 # / ## 开头）
+function isSectionHeading(line: string): boolean {
+  const t = line.trim()
+  if (!t) return false
+  return (t.startsWith('【') && t.includes('】')) || t.startsWith('#')
+}
+
+// 把 text 插入到标题含 section 的区段末尾（下一个栏目标题之前）；找不到栏目则追加到末尾
+function insertIntoSection(content: string, section: string, text: string): string {
+  const lines = content.split('\n')
+  let head = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (isSectionHeading(lines[i]) && lines[i].includes(section)) {
+      head = i
+      break
+    }
+  }
+  if (head === -1) return content ? `${content}\n${text}` : text
+  let end = lines.length
+  for (let i = head + 1; i < lines.length; i++) {
+    if (isSectionHeading(lines[i])) {
+      end = i
+      break
+    }
+  }
+  // 去掉该区段末尾的空行后再插入
+  let insertAt = end
+  while (insertAt - 1 > head && !lines[insertAt - 1].trim()) insertAt--
+  return [...lines.slice(0, insertAt), text, ...lines.slice(insertAt)].join('\n')
 }
 
 // 归一化世界书数组：过滤非法/空内容条目
@@ -475,6 +459,22 @@ export async function ensureOptions(
   }
 }
 
+// 世界书条目超长时的独立压缩请求：返回压缩后的正文；失败或空则返回原文（不影响主流程）
+export async function compressLoreEntry(
+  world: World,
+  entry: LoreEntry,
+  config: APIConfig,
+  threshold: number,
+): Promise<string> {
+  const content = await chat(
+    [{ role: 'user', content: buildLoreCompressPrompt(world, entry, threshold) }],
+    config,
+  )
+  const data = extractJson(content) as Record<string, any>
+  const out = typeof data.content === 'string' ? data.content.trim() : ''
+  return out || entry.content
+}
+
 // 将 patchSave 修改指令应用到现有存档上（只改列出的字段，数组字段整体替换）
 export function applySavePatch(base: SaveData, patch: unknown): SaveData {
   const out: SaveData = JSON.parse(JSON.stringify(base)) as SaveData
@@ -578,40 +578,5 @@ async function recoverAction(
     options,
     save: patchedSave,
     loreUpdates: normalizeLorebook(d2.loreUpdates),
-  }
-}
-// 改写同步：玩家手动改写了最新页叙事后，在下一次行动前调用，
-// 让 AI 以改写版为准修正存档与世界书（patchSave 语义，只列变化）
-export async function syncAfterRewrite(
-  world: World,
-  currentSave: SaveData,
-  page: StoryPage,
-  config: APIConfig,
-  onRecoverStart?: () => void,
-): Promise<{ save: SaveData; loreUpdates: LoreEntry[] }> {
-  const { min, max } = narrationRange(config)
-  const system = buildActionSystemPrompt(min, max, world, false, true)
-  try {
-    const content = await chat(
-      [
-        { role: 'system', content: system },
-        { role: 'user', content: buildRewriteSyncPrompt(world, currentSave, page, getLoreCfg()) },
-      ],
-      config,
-    )
-    const data = extractJson(content) as Record<string, any>
-    const patched = lockProfileIfNeeded(
-      applySavePatch(currentSave, data.patchSave ?? data.save ?? {}),
-      currentSave,
-    )
-    return {
-      save: patched,
-      loreUpdates: normalizeLorebook(data.loreUpdates),
-    }
-  } catch (e) {
-    if (e instanceof AIError && e.truncated) {
-      onRecoverStart?.()
-    }
-    throw e
   }
 }

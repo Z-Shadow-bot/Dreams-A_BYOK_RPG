@@ -117,7 +117,7 @@ async function exportAdventure() {
   importError.value = ''
   exporting.value = true
   try {
-    const data = adventure.exportAdventure()
+    const data = await adventure.exportAdventure()
     if (!data) {
       importError.value = '当前没有可导出的冒险数据'
       return
@@ -152,13 +152,15 @@ function formatTime(t: number): string {
 async function exportNovel() {
   importError.value = ''
   opError.value = ''
-  if (adventure.pages.length === 0) {
+  // 注意：内存只保留页面窗口，这里从数据库读取全部页
+  const allPages = await adventure.getAllPages()
+  if (allPages.length === 0) {
     opError.value = '当前没有可导出的故事内容'
     return
   }
   const from = Math.round(novelFrom.value)
   const to = Math.round(novelTo.value)
-  const total = adventure.pages.length
+  const total = allPages.length
   if (!Number.isFinite(from) || !Number.isFinite(to)) {
     opError.value = '页码范围无效'
     return
@@ -168,7 +170,7 @@ async function exportNovel() {
   const worldName = worldStore.currentWorld?.name ?? '冒险记录'
   const lines: string[] = [`${worldName}`, `（节选自冒险记录 · 第 ${first}-${last} 页）`, '']
   for (let i = first - 1; i <= last - 1; i++) {
-    const p = adventure.pages[i]
+    const p = allPages[i]
     if (!p) continue
     lines.push(`【第 ${i + 1} 页】`)
     if (p.playerInput && p.playerInput.trim()) {
@@ -232,7 +234,7 @@ async function exportNovel() {
         v-model.number="novelFrom"
         type="number"
         min="1"
-        :max="adventure.pages.length"
+        :max="adventure.totalPages"
         class="page-input"
         @input="novelFromEdited = true"
       />
@@ -241,7 +243,7 @@ async function exportNovel() {
         v-model.number="novelTo"
         type="number"
         min="1"
-        :max="adventure.pages.length"
+        :max="adventure.totalPages"
         class="page-input"
         @input="novelToEdited = true"
       />

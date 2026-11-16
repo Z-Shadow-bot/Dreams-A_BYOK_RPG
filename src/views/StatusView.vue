@@ -108,6 +108,44 @@ function removeSkill(index: number) {
   void adventure.persistState()
 }
 
+// 概述编辑（本地改写，直接改存档对应内容，不调 AI）
+const editingOverviewField = ref<'impression' | 'ongoing' | 'latestProgress' | 'recentEvent' | null>(null)
+const editingOverviewEventIndex = ref(-1)
+const overviewEditText = ref('')
+
+function startEditOverviewText(field: 'impression' | 'ongoing' | 'latestProgress') {
+  if (!editMode.value || !save.value) return
+  editingOverviewField.value = field
+  editingOverviewEventIndex.value = -1
+  overviewEditText.value = save.value.overview[field] ?? ''
+}
+function startEditOverviewEvent(index: number) {
+  if (!editMode.value || !save.value) return
+  editingOverviewField.value = 'recentEvent'
+  editingOverviewEventIndex.value = index
+  overviewEditText.value = save.value.overview.recentEvents[index] ?? ''
+}
+function saveEditOverview() {
+  if (!save.value || !editingOverviewField.value) return
+  const f = editingOverviewField.value
+  if (f === 'recentEvent') {
+    const arr = save.value.overview.recentEvents
+    const i = editingOverviewEventIndex.value
+    if (i >= 0 && i < arr.length) arr[i] = overviewEditText.value
+  } else {
+    save.value.overview[f] = overviewEditText.value
+  }
+  editingOverviewField.value = null
+  editingOverviewEventIndex.value = -1
+  overviewEditText.value = ''
+  void adventure.persistState()
+}
+function cancelEditOverview() {
+  editingOverviewField.value = null
+  editingOverviewEventIndex.value = -1
+  overviewEditText.value = ''
+}
+
 // 添加空条目（仅改写模式可用），添加后直接进入编辑态
 function addItem(type: 'equipment' | 'items') {
   if (!editMode.value || !save.value) return
@@ -616,24 +654,91 @@ const characterList = computed(() => {
 
         <!-- 概述 -->
         <div v-else class="overview">
+          <label class="edit-toggle-row">
+            <input type="checkbox" v-model="editMode" />
+            <span>允许改写（开启后双击条目编辑）</span>
+          </label>
           <section class="block">
             <h3 class="block-title">主观认知</h3>
-            <p class="body-text">{{ save.overview.impression || '（空）' }}</p>
+            <template v-if="editingOverviewField === 'impression'">
+              <textarea
+                v-model="overviewEditText"
+                class="status-edit-textarea"
+                rows="3"
+                placeholder="主观认知…"
+                @keydown.ctrl.enter.prevent="saveEditOverview"
+                @keydown.meta.enter.prevent="saveEditOverview"
+                @keydown.esc.prevent="cancelEditOverview"
+              />
+              <div class="edit-actions">
+                <button class="status-edit-btn save" @click="saveEditOverview">完成</button>
+                <button class="status-edit-btn cancel" @click="cancelEditOverview">取消</button>
+              </div>
+            </template>
+            <p v-else class="body-text" @dblclick="startEditOverviewText('impression')">{{ save.overview.impression || '（空）' }}</p>
           </section>
           <section class="block">
             <h3 class="block-title">进行中的事项</h3>
-            <p class="body-text">{{ save.overview.ongoing || '（无）' }}</p>
+            <template v-if="editingOverviewField === 'ongoing'">
+              <textarea
+                v-model="overviewEditText"
+                class="status-edit-textarea"
+                rows="3"
+                placeholder="进行中的事项…"
+                @keydown.ctrl.enter.prevent="saveEditOverview"
+                @keydown.meta.enter.prevent="saveEditOverview"
+                @keydown.esc.prevent="cancelEditOverview"
+              />
+              <div class="edit-actions">
+                <button class="status-edit-btn save" @click="saveEditOverview">完成</button>
+                <button class="status-edit-btn cancel" @click="cancelEditOverview">取消</button>
+              </div>
+            </template>
+            <p v-else class="body-text" @dblclick="startEditOverviewText('ongoing')">{{ save.overview.ongoing || '（无）' }}</p>
           </section>
           <section class="block">
             <h3 class="block-title">近期关键事件</h3>
             <p v-if="save.overview.recentEvents.length === 0" class="muted">（无）</p>
-            <ul class="events">
-              <li v-for="(e, i) in save.overview.recentEvents" :key="i">{{ e }}</li>
+            <ul v-else class="events">
+              <li v-for="(e, i) in save.overview.recentEvents" :key="i" @dblclick="startEditOverviewEvent(i)">
+                <template v-if="editingOverviewField === 'recentEvent' && editingOverviewEventIndex === i">
+                  <textarea
+                    v-model="overviewEditText"
+                    class="status-edit-textarea"
+                    rows="2"
+                    placeholder="事件内容…"
+                    @dblclick.stop
+                    @keydown.ctrl.enter.prevent="saveEditOverview"
+                    @keydown.meta.enter.prevent="saveEditOverview"
+                    @keydown.esc.prevent="cancelEditOverview"
+                  />
+                  <div class="edit-actions">
+                    <button class="status-edit-btn save" @click="saveEditOverview">完成</button>
+                    <button class="status-edit-btn cancel" @click="cancelEditOverview">取消</button>
+                  </div>
+                </template>
+                <span v-else>{{ e }}</span>
+              </li>
             </ul>
           </section>
           <section class="block">
             <h3 class="block-title">最新进展</h3>
-            <p class="body-text">{{ save.overview.latestProgress || '（无）' }}</p>
+            <template v-if="editingOverviewField === 'latestProgress'">
+              <textarea
+                v-model="overviewEditText"
+                class="status-edit-textarea"
+                rows="3"
+                placeholder="最新进展…"
+                @keydown.ctrl.enter.prevent="saveEditOverview"
+                @keydown.meta.enter.prevent="saveEditOverview"
+                @keydown.esc.prevent="cancelEditOverview"
+              />
+              <div class="edit-actions">
+                <button class="status-edit-btn save" @click="saveEditOverview">完成</button>
+                <button class="status-edit-btn cancel" @click="cancelEditOverview">取消</button>
+              </div>
+            </template>
+            <p v-else class="body-text" @dblclick="startEditOverviewText('latestProgress')">{{ save.overview.latestProgress || '（无）' }}</p>
           </section>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import type { World, SaveData, PanelField, LoreEntry, StoryPage } from '@/types'
+import type { World, SaveData, PanelField, LoreEntry } from '@/types'
 import type { Difficulty, NarrativeSpeed, NarrativeDetail, EventFrequency } from '@/stores/settings'
 
 // 每轮注入世界书条目的预算上限（字符）
@@ -153,7 +153,9 @@ export function buildOutputFormat(_narrationMin: number, narrationMax: number, u
   "options": ["参考选项1", "参考选项2", "参考选项3"],
   "patchSave": { ...只列发生变化的字段，见下方说明... },
   "loreUpdates": [
-    { "title": "条目标题", "aliases": ["别名", "曾用称呼"], "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
+    { "title": "已有条目（增量追加）", "appendContent": "要追加的新信息", "appendTo": "关键记忆" },
+    { "title": "已有条目（增量删除）", "removeLines": ["已过时的旧描述片段"] },
+    { "title": "新条目或需整体改写", "aliases": ["别名", "曾用称呼"], "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
     { "title": "已死亡/损毁的条目", "content": "【已死亡】……（保留条目并改写为终态，切勿删除）" },
     { "title": "重复或误记的条目", "remove": true }
   ]
@@ -186,7 +188,9 @@ JSON 语法硬性要求（违反任一条都会导致解析失败）：
   "options": ["参考选项1", "参考选项2", "参考选项3"],
   "save": { ...下面"存档结构"定义的完整存档对象... },
   "loreUpdates": [
-    { "title": "条目标题", "aliases": ["别名", "曾用称呼"], "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
+    { "title": "已有条目（增量追加）", "appendContent": "要追加的新信息", "appendTo": "关键记忆" },
+    { "title": "已有条目（增量删除）", "removeLines": ["已过时的旧描述片段"] },
+    { "title": "新条目或需整体改写", "aliases": ["别名", "曾用称呼"], "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
     { "title": "已死亡/损毁的条目", "content": "【已死亡】……（保留条目并改写为终态，切勿删除）" },
     { "title": "重复或误记的条目", "remove": true }
   ]
@@ -429,6 +433,7 @@ ${lines.join('\n')}
 
 # 世界书使用规则
 - 世界书条目必须与存档（overview、inventory、activeLocations、activeCharacters 等）保持一致，不得互相矛盾；若剧情推进改变了条目描述的事物，应通过 loreUpdates 同步更新该条目。
+- 条目内容增量更新（优先，省 token 且更稳）：更新已有条目时，优先只输出变化——appendContent 追加新信息（可用 appendTo 指定追加到某个【栏目】末尾，如"关键记忆"）；removeLines 删除包含指定子串的旧行；只有需要整体重构/合并时才用 content 输出完整新内容。未提供 content 时，条目原有内容保持不变，不会被清空。
 - 若玩家指令与某世界书设定冲突：不要拒绝玩家，也不得歪曲或悄悄改写设定来迎合玩家；应当推断"在该设定约束下，玩家行动会产生的合理、自然后果"并如实呈现。例如：石碑被设定为不可破坏，玩家执意挥锤猛砸，则锤柄崩裂、虎口震麻，石碑纹丝不动。
 - 地点与人物信息全部通过世界书条目存储：每个地点对应一个 isLocation:true 条目，每个人物对应一个 isCharacter:true 条目。条目 title 用地点名/人名，content 记录详细情况（地点描述、人物介绍与态度、记忆与关系变化等）。不要在存档 map/characters 中存储这些信息（始终保持空数组）。
   - 地点条目的 tags 应包含该地点可能出现的人物名字、地点别名、相关势力/组织等，以便人物在场时能命中注入。
@@ -444,7 +449,7 @@ ${lines.join('\n')}
 - 终态标注（重要）：当条目对应的事物已经死亡、被摧毁、被损毁、已完成或永久失效时，必须保留该条目、切勿删除；将条目 content 改写为终态描述并在开头加上状态前缀（如"【已死亡】""【已摧毁】""【已损毁】""【已完成】"），再通过 loreUpdates 更新该条目。
 - 删除条目（仅限两种情形）：只有当条目属于"完全重复（与另一条内容重复）"或"记录错误（本不该存在、与剧情矛盾）"时，才可通过 loreUpdates 返回 { "title": "条目标题", "remove": true } 删除；只需 title 匹配即可，无需其他字段。fixed 条目（底层设定）不可删除。除此之外的任何"死亡/摧毁/损毁/结束"都不得使用删除，必须改为终态标注。
 - 当玩家到达某地点或接触某人物时，在该条目的 lastVisitedTime 字段记录当前 worldTime（冒险时间快照）。当玩家时隔较久重返旧地点或重遇旧人物时，先对比当前 worldTime 与条目 lastVisitedTime 判断时间流逝程度，据此对该世界书条目做合理演化——地点可能兴衰变化、人物可能因独立日程而离开或改变，不会停在原地等待——再据此读取与呈现；演化结果与新的 lastVisitedTime 同时通过 loreUpdates 更新到世界书。
-- 标注"隐藏·彩蛋"的条目是尚未出场的彩蛋角色/设定：不要主动让该角色出场，只在剧情自然发展遇到合理条件时（如旅途偶遇、城镇擦肩、任务交集）才让她出场；出场后通过 loreUpdates 更新该条目并移除 hidden 标记（在返回的条目中设 hidden 为 false 或省略），此后按普通世界书条目处理。
+- 标注"隐藏·彩蛋"的条目是尚未出场的彩蛋角色/设定：不要主动让该角色出场，只在剧情自然发展遇到合理条件时（如旅途偶遇、城镇擦肩、任务交集）才让她出场；出场后通过 loreUpdates 更新该条目并移除 hidden 标记（必须显式设 hidden 为 false，不能省略），此后按普通世界书条目处理。
 - 标注"固定"的条目是不可更改的底层设定：不得通过 loreUpdates 修改或删除固定条目的 title/tags/content/fixed/links，可以在该条目描述的框架内展开剧情。
 - isLocation/isCharacter 标记由 AI 根据条目内容类型自动打上，不需要玩家编辑；地点条目打 isLocation:true，人物条目打 isCharacter:true，其他类型条目不打。
 - loreUpdates 仅在确实有更新时返回，否则返回空数组 []。`
@@ -728,7 +733,9 @@ export function buildActionRecoverySplitSavePrompt(
   return `上一轮输出因过长被截断，本轮拆成两次独立生成。第 1 次已生成叙事与存档变化，这是第 2 次，你只输出一个 JSON 对象：
 {
   "loreUpdates": [
-    { "title": "条目标题", "aliases": ["别名", "曾用称呼"], "tags": ["标签"], "content": "正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
+    { "title": "已有条目（增量追加）", "appendContent": "要追加的新信息", "appendTo": "关键记忆" },
+    { "title": "已有条目（增量删除）", "removeLines": ["已过时的旧描述片段"] },
+    { "title": "新条目或需整体改写", "aliases": ["别名", "曾用称呼"], "tags": ["标签"], "content": "正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
     { "title": "已死亡/损毁的条目", "content": "【已死亡】……（保留条目并改写为终态，切勿删除）" },
     { "title": "重复或误记的条目", "remove": true }
   ]
@@ -736,7 +743,7 @@ export function buildActionRecoverySplitSavePrompt(
 不要输出 narration、options 或 patchSave 字段。
 
 【loreUpdates 规则】
-- 新增/更新条目：按正常格式返回（title + aliases + tags + content + ...）
+- 增量优先（省 token 且更稳）：更新已有条目时，优先只输出变化——用 appendContent 追加新信息（可用 appendTo 指定追加到某个【栏目】末尾）；用 removeLines 删除内容中包含指定子串的旧行；只有需要整体重构/合并时才用 content 输出完整新内容。未提供 content 时，条目原有内容保持不动（不会被清空）。
 - 终态标注：事物死亡/摧毁/损毁/完结时，保留条目并把 content 改写为终态（开头加"【已死亡】""【已损毁】"等前缀），切勿删除
 - 禁止重建：曾出现过的实体（含已终结的）不得新建条目，必须先查重并复用原条目
 - 别名与合并：实体改名时更新原条目（title 改新名、旧称呼写入 aliases），不得新建；发现当前生效条目中有指向同一实体的重复条目时，合并为一条（其余标题并入 aliases 后 remove）
@@ -749,62 +756,28 @@ ${buildActionRecoveryBase(world, currentSave, userInput, narrationText, false, l
 
 ${RECOVERY_JSON_RULE}`
 }
-// 改写同步：玩家手动改写了最新一页的叙事，AI 据此修正存档与世界书（以改写版为准）
-export function buildRewriteSyncPrompt(
+// 世界书条目超长自动压缩（独立请求，用于控制单条体积、避免吃满注入预算）
+export function buildLoreCompressPrompt(world: World, entry: LoreEntry, threshold: number): string {
+  const title = (entry.title ?? '').trim() || '（无标题）'
+  return `你是文字冒险游戏《${world.name}》的设定整理助手。下面这条世界书条目内容偏长（约 ${entry.content.length} 字，阈值 ${threshold} 字），请在**不丢失关键信息**的前提下进行压缩。
 
-  world: World,
-  currentSave: SaveData,
-  page: StoryPage,
-  loreCfg?: LoreInjectionConfig,
-): string {
-  const activeNames = [
-    ...(currentSave.activeLocations ?? []),
-    ...(currentSave.activeCharacters ?? []),
-  ]
-  const context = [
-    page.playerInput,
-    page.narration,
-    ...Object.values(currentSave.panel).map((v) => String(v)),
-    currentSave.characterProfile,
-    currentSave.experience,
-    currentSave.overview.impression,
-    currentSave.overview.ongoing,
-    ...activeNames,
-    ...currentSave.map.map((m) => m.name),
-    ...currentSave.characters.map((c) => c.name),
-  ].join(' ')
-  const lorePart = buildLoreInjection(
-    world,
-    context,
-    world.sceneField ? String(currentSave.panel[world.sceneField] ?? '') : undefined,
-    activeNames,
-    loreCfg,
-  )
-  return `${lorePart}
+【条目标题】${title}
 
-【改写同步（高优先级指令，务必执行）】
-玩家手动改写了上一轮生成的叙事。请基于【改写后的叙事】检查当前存档与世界书，凡与改写内容存在矛盾、或改写引入的合理新情况尚未记录的地方，一律修正；以玩家改写版为唯一事实来源，不得试图恢复成改写前的说法。
-- 世界书：有需要同步的条目标题/内容变化时，通过 loreUpdates 返回更新（未变化则返回空数组 []）。事物死亡/摧毁/损毁/完结时，保留条目并把 content 改写为终态（开头加"【已死亡】"等前缀），切勿删除；仅当条目完全重复或记录错误时才返回 { "title": "条目标题", "remove": true }。
-- 存档：仅返回需要修改的字段（patch 语义，未列出的字段保持原样；inventory 按物品名增量更新——只列新增/变化的物品，未列出的保留，删除用 "remove": true；map / characters 已废弃始终省略；hidden 用 { "add": {...}, "remove": [...] } 表达增量）。
-- 若改写内容与既有设定冲突，以改写内容为准，并相应调整设定描述使其自洽；若改写内容不影响任何数据，save 返回空对象 {}，loreUpdates 返回 []。
-- 不要输出 narration 或 options 字段。
+【条目原文】
+${entry.content}
 
-【上一轮的玩家行动】
-${page.playerInput}
-
-【改写后的叙事（以这个为准）】
-${page.narration}
-
-【当前存档】
-${stringifyCompact(currentSave)}
-
-JSON 语法硬性要求：键名与字符串值一律用英文双引号；字符串内换行写成 \\n；不要注释、尾逗号；只输出一个 JSON 对象。
+压缩要求（务必遵守）：
+1. 保留所有"会影响后续剧情判断"的关键信息：人物身份/种族/职业/性格、与玩家的关系与承诺、关键事件与记忆（按时间顺序，可合并同类项）、当前状态（所在地/目的/伤病/态度），以及"【已死亡】/【已摧毁】/【已损毁】/【已完成】"等终态标记。
+2. 禁止编造原文没有的信息；禁止改变任何事实、数值、名字、时间与因果关系。
+3. 合并冗余表述与重复描述，删除纯修辞与无信息量的铺垫；保留原有的【栏目】结构（如【身份】【关系】【关键记忆】【当前状态】），没有栏目时可自行归纳为若干短栏。
+4. 压缩后总长度应明显减少，但不得使用"……""（略）""同上"等省略手法跳过信息。
+5. 只输出一个 JSON 对象，不要输出任何其他文字。
 
 {
-  "save": { ...仅列出需要修改的字段（patch 语义）... },
-  "loreUpdates": [ { "title": ..., "aliases": [...], "tags": [...], "content": ..., "required": false, "fixed": false, "links": [...] }, { "title": "重复或误记的条目", "remove": true } ]
+  "content": "压缩后的条目正文（保留换行可用 \\n）"
 }`
 }
+
 // 选项补全：AI 未正常生成选项时，基于本页叙事补 3 个选项
 export function buildOptionsFallbackPrompt(narration: string): string {
   return `你是文字冒险游戏的叙事引擎。上一轮的叙事已经生成，但可执行的下一步行动选项缺失或不足。请基于以下叙事，生成 3 个自然、可执行的下一步行动方向。

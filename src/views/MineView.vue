@@ -8,6 +8,7 @@ import { Share } from '@capacitor/share'
 import { getStorageInfo, requestPersistentStorage, isStoragePersisted, formatBytes } from '@/utils/storage'
 import type { StorageInfo } from '@/utils/storage'
 import { createId } from '@/types'
+import { APP_VERSION, CHANGELOG } from '@/version'
 
 const settings = useSettingsStore()
 
@@ -45,6 +46,7 @@ const apiConfigOpen = ref(false)
 const genSettingsOpen = ref(false)
 const contextSettingsOpen = ref(false)
 const displaySettingsOpen = ref(false)
+const changelogOpen = ref(false)
 
 interface ModelPreset {
   provider: string
@@ -217,6 +219,10 @@ function onLinkBudgetInput(e: Event) {
 function onWorldSettingMaxInput(e: Event) {
   const n = Number((e.target as HTMLInputElement).value)
   if (Number.isFinite(n) && n > 0) settings.setWorldSettingMax(Math.floor(n))
+}
+function onLoreCompressThresholdInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n) && n >= 0) settings.setLoreCompressThreshold(Math.floor(n))
 }
 
 // 显示设置
@@ -621,6 +627,22 @@ async function doClearLog() {
           </div>
           <p class="setting-hint">世界核心设定（worldSetting）的最大字数，超出时精简并拆入世界书条目（默认 3000）</p>
         </div>
+
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">世界书条目压缩阈值</label>
+            <input
+              type="number"
+              class="input"
+              min="0"
+              step="100"
+              placeholder="默认 1200"
+              :value="settings.loreCompressThreshold"
+              @input="onLoreCompressThresholdInput"
+            />
+          </div>
+          <p class="setting-hint">单个世界书条目超过该字符数时，会自动发一次独立请求压缩（默认 1200；设为 0 关闭）</p>
+        </div>
       </template>
     </section>
 
@@ -676,6 +698,22 @@ async function doClearLog() {
           <button class="color-preset-btn" @click="settings.setTextColor('#d4c5a0'); settings.setBgColor('#2d2317')">羊皮纸</button>
           <button class="color-preset-btn" @click="settings.setTextColor('#a0d8a0'); settings.setBgColor('#0d1f0d')">墨绿</button>
           <button class="color-preset-btn" @click="settings.setTextColor('#f0f0f0'); settings.setBgColor('#1a0a1a')">暗紫</button>
+        </div>
+      </template>
+    </section>
+
+    <!-- 更新日志（可折叠） -->
+    <section class="block">
+      <button class="section-toggle" @click="changelogOpen = !changelogOpen">
+        <span>更新日志 · v{{ APP_VERSION }}</span>
+        <span class="toggle-arrow">{{ changelogOpen ? '▾' : '▸' }}</span>
+      </button>
+      <template v-if="changelogOpen">
+        <div v-for="log in CHANGELOG" :key="log.version" class="changelog-entry">
+          <p class="changelog-head">v{{ log.version }} · {{ log.date }}</p>
+          <ul class="changelog-list">
+            <li v-for="(it, i) in log.items" :key="i">{{ it }}</li>
+          </ul>
         </div>
       </template>
     </section>
@@ -925,6 +963,25 @@ async function doClearLog() {
   margin-top: 14px;
   font-weight: 600;
   color: var(--text);
+}
+.changelog-entry {
+  margin-top: 14px;
+}
+.changelog-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--active);
+  margin: 0 0 6px;
+}
+.changelog-list {
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 0;
+}
+.changelog-list li {
+  margin-bottom: 4px;
 }
 .truncate-group {
   margin-top: 14px;

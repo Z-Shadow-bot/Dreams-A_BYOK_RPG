@@ -80,6 +80,10 @@ export interface LoreEntry {
   isCharacter?: boolean // 人物条目（AI 自动打上，不显示为标签，不需要玩家编辑；状态页"人物"从此类条目读取）
   lastVisitedTime?: string // 上次到访/接触的冒险时间（worldTime 快照），用于故地重游/故人重逢时判断时间流逝
   remove?: boolean // 删除标记（仅用于 loreUpdates 输出：仅当条目完全重复或记录错误时 AI 返回 { title, remove: true }；已死亡/损毁的条目须保留并用 content 标注终态，不持久化）
+  // ===== 内容级增量更新（仅用于 loreUpdates 输出，不持久化）=====
+  appendContent?: string // 追加到条目内容（未提供 content 时生效；可配合 appendTo 指定栏目）
+  appendTo?: string // 追加目标栏目（如「关键记忆」）；命中对应【栏目】标题时插入该区段末尾，否则追加到条目末尾
+  removeLines?: string[] // 删除条目内容中包含这些子串的行（逐行匹配）
 }
 
 // ===== 世界原始快照（创建世界时保存：供"重新开始冒险"重置设定、"复制世界"生成副本使用） =====

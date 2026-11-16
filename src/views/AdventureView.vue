@@ -96,12 +96,12 @@ async function saveRewrite() {
 const worldName = computed(() => worldStore.currentWorld?.name ?? '未选择世界')
 const currentPage = computed(() => adventure.currentPage)
 const pageIndicator = computed(() =>
-  adventure.hasAdventure ? `${adventure.currentIndex + 1} / ${adventure.pages.length}` : '',
+  adventure.hasAdventure ? `${adventure.currentIndex + 1} / ${adventure.totalPages}` : '',
 )
 const canPrev = computed(() => adventure.currentIndex > 0)
-const canNext = computed(() => adventure.currentIndex < adventure.pages.length - 1)
+const canNext = computed(() => adventure.currentIndex < adventure.totalPages - 1)
 const isLatest = computed(
-  () => adventure.hasAdventure && adventure.currentIndex === adventure.pages.length - 1,
+  () => adventure.hasAdventure && adventure.currentIndex === adventure.totalPages - 1,
 )
 
 const readerBody = ref<HTMLElement | null>(null)
@@ -243,13 +243,13 @@ async function begin() {
 }
 
 function prev() {
-  if (canPrev.value) adventure.setPage(adventure.currentIndex - 1)
+  if (canPrev.value) void adventure.setPage(adventure.currentIndex - 1)
 }
 function next() {
-  if (canNext.value) adventure.setPage(adventure.currentIndex + 1)
+  if (canNext.value) void adventure.setPage(adventure.currentIndex + 1)
 }
 function goLatest() {
-  adventure.setPage(adventure.pages.length - 1)
+  void adventure.setPage(adventure.totalPages - 1)
 }
 // 点击行动选项：不再立即发送，而是复制到下方输入框，方便玩家修改后再发送
 const actionInputEl = ref<HTMLTextAreaElement | null>(null)

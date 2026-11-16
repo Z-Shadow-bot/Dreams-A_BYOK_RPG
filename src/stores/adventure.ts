@@ -3,6 +3,8 @@ import {
   getState,
   putState,
   listPages,
+  countPages,
+  getPagesRange,
   putPage,
   deletePagesFrom,
   replacePages,
@@ -11,12 +13,22 @@ import {
   putSavePoint,
   deleteSavePoint,
 } from '@/db'
-import { generateAction, generateCharacter, normalizeSave, ensureOptions } from '@/ai/service'
+import {
+  generateAction,
+  generateCharacter,
+  normalizeSave,
+  ensureOptions,
+  applyLoreContentDelta,
+  compressLoreEntry,
+} from '@/ai/service'
 import { errorMessage } from '@/ai/client'
 import { createId } from '@/types'
 import type { SaveData, StoryPage, SavePoint, WorldState, PanelField, LoreEntry, World, PresetCharacter } from '@/types'
 import { useSettingsStore } from './settings'
 import { useWorldStore, normalizeImportedLorebook } from './world'
+
+// 冒险页内存窗口大小：只保留当前查看位置附近的若干页，其余按需从 IndexedDB 懒加载
+const PAGE_WINDOW = 60
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T
@@ -86,9 +98,9 @@ function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreE
     }
     if (idx >= 0) {
       const old = book[idx]
-      // 固定条目：AI 不得修改内容/tags/title/fixed/links，仅允许移除 hidden（彩蛋出场）
+      // 固定条目：AI 不得修改内容/tags/title/fixed/links，仅允许显式 hidden:false 移除隐藏（彩蛋出场）
       if (old.fixed) {
-        if (u.hidden === false || u.hidden === undefined) {
+        if (u.hidden === false) {
           book[idx] = { ...old, hidden: undefined }
         }
         continue
@@ -110,18 +122,35 @@ function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreE
         ...old,
         title: newTitle,
         aliases: mergedAliases.size > 0 ? [...mergedAliases] : undefined,
+        // 未提供（空）时保留旧值；提供则覆盖——增量更新只发变化时不会误清空
+        tags: u.tags.length > 0 ? u.tags : old.tags,
+        content: applyLoreContentDelta(old.content, u),
+        required: u.required !== undefined ? u.required : old.required,
+        fixed: u.fixed !== undefined ? u.fixed : old.fixed,
+        links: u.links !== undefined ? u.links : old.links,
+        hidden: u.hidden !== undefined ? u.hidden : old.hidden,
+        isLocation: u.isLocation !== undefined ? u.isLocation : old.isLocation,
+        isCharacter: u.isCharacter !== undefined ? u.isCharacter : old.isCharacter,
+        lastVisitedTime: u.lastVisitedTime !== undefined ? u.lastVisitedTime : old.lastVisitedTime,
+      }
+    } else {
+      // 新条目：以 content（或 appendContent）为正文，并剥离增量字段
+      const newContent = (u.content || u.appendContent || '').trim()
+      if (!newContent) continue
+      book.push({
+        id: u.id,
+        title: u.title,
+        aliases: aliases.length > 0 ? aliases : undefined,
         tags: u.tags,
-        content: u.content,
+        content: newContent,
         required: u.required,
         fixed: u.fixed,
         links: u.links,
         hidden: u.hidden,
         isLocation: u.isLocation,
         isCharacter: u.isCharacter,
-        lastVisitedTime: u.lastVisitedTime !== undefined ? u.lastVisitedTime : old.lastVisitedTime,
-      }
-    } else {
-      book.push({ ...u, remove: undefined, aliases: aliases.length > 0 ? aliases : undefined })
+        lastVisitedTime: u.lastVisitedTime,
+      })
     }
   }
   return book
@@ -174,7 +203,9 @@ export const useAdventureStore = defineStore('adventure', {
   state: () => ({
     worldId: null as string | null,
     currentSave: null as SaveData | null,
-    pages: [] as StoryPage[],
+    pages: [] as StoryPage[], // 仅保存当前查看位置附近的窗口（懒加载）
+    pageWindowStart: 0, // pages[0] 对应的绝对页码
+    totalPages: 0, // 该世界总页数
     currentIndex: -1,
     savePoints: [] as SavePoint[],
     loading: false,
@@ -202,8 +233,9 @@ export const useAdventureStore = defineStore('adventure', {
       return state.currentSave !== null
     },
     currentPage(state): StoryPage | null {
-      if (state.currentIndex >= 0 && state.currentIndex < state.pages.length) {
-        return state.pages[state.currentIndex]
+      const local = state.currentIndex - state.pageWindowStart
+      if (local >= 0 && local < state.pages.length) {
+        return state.pages[local]
       }
       return null
     },
@@ -214,6 +246,8 @@ export const useAdventureStore = defineStore('adventure', {
       this.worldId = worldId
       this.currentSave = null
       this.pages = []
+      this.pageWindowStart = 0
+      this.totalPages = 0
       this.currentIndex = -1
       this.savePoints = []
       this.error = null
@@ -232,7 +266,7 @@ export const useAdventureStore = defineStore('adventure', {
       }
       const state = await getState(worldId)
       if (this.worldId !== worldId) return
-      const pages = await listPages(worldId)
+      const total = await countPages(worldId)
       if (this.worldId !== worldId) return
       const sps = await listSavePoints(worldId)
       if (this.worldId !== worldId) return
@@ -252,12 +286,16 @@ export const useAdventureStore = defineStore('adventure', {
       this.npcSurpriseCounter = state?.npcSurpriseCounter && state.npcSurpriseCounter > 0
         ? state.npcSurpriseCounter
         : 1 + Math.floor(Math.random() * 10)
-      this.pages = pages
+      this.pages = []
+      this.pageWindowStart = 0
+      this.totalPages = total
       this.savePoints = sps
-      if (this.pages.length > 0) {
-        if (this.currentIndex < 0 || this.currentIndex >= this.pages.length) {
-          this.currentIndex = this.pages.length - 1
+      if (total > 0) {
+        if (this.currentIndex < 0 || this.currentIndex >= total) {
+          this.currentIndex = total - 1
         }
+        await this.loadWindowAround(this.currentIndex)
+        if (this.worldId !== worldId) return
       } else {
         this.currentIndex = -1
       }
@@ -295,6 +333,25 @@ export const useAdventureStore = defineStore('adventure', {
         updatedAt: Date.now(),
       }
       await putState(state)
+    },
+    // 加载包含 index 的页面窗口（懒加载）
+    async loadWindowAround(index: number) {
+      const worldId = this.worldId
+      if (!worldId) return
+      const total = this.totalPages
+      if (total <= 0) {
+        this.pages = []
+        this.pageWindowStart = 0
+        return
+      }
+      const clamped = Math.max(0, Math.min(index, total - 1))
+      let start = Math.max(0, clamped - Math.floor(PAGE_WINDOW / 2))
+      const end = Math.min(total - 1, start + PAGE_WINDOW - 1)
+      start = Math.max(0, end - PAGE_WINDOW + 1)
+      const pages = await getPagesRange(worldId, start, end)
+      if (this.worldId !== worldId) return
+      this.pages = pages
+      this.pageWindowStart = start
     },
     async startAdventure(characterInput: string, opts: { summarize?: boolean; expand?: boolean } = {}, hiddenPreset?: string) {
       const world = useWorldStore().currentWorld
@@ -367,9 +424,13 @@ export const useAdventureStore = defineStore('adventure', {
         this.currentSave = result.save
         syncActiveNamesWithLorebook(this.currentSave, merged ?? freshWorld.lorebook)
         this.pages = [page]
+        this.pageWindowStart = 0
+        this.totalPages = 1
         this.currentIndex = 0
         await this.persistState()
         void useWorldStore().touch(worldId)
+        // 世界书条目超长时异步压缩（不阻塞本轮）
+        this.compressTouchedLore(worldId, result.loreUpdates).catch(() => {})
       } catch (e) {
         this.error = errorMessage(e, useSettingsStore().devMode)
       } finally {
@@ -384,6 +445,15 @@ export const useAdventureStore = defineStore('adventure', {
       if (!world || !worldId || !this.currentSave) {
         this.error = '尚未开始冒险，无法采取行动'
         return
+      }
+      // 确保内存窗口覆盖到最新页（例如从旧页触发重试时），避免追加新页后索引错位
+      if (this.totalPages > 0) {
+        const windowEnd = this.pageWindowStart + this.pages.length - 1
+        if (windowEnd !== this.totalPages - 1 || this.currentIndex !== this.totalPages - 1) {
+          await this.loadWindowAround(this.totalPages - 1)
+          if (this.worldId !== worldId) return
+          this.currentIndex = this.totalPages - 1
+        }
       }
       this.lastInput = input
       this.lastMode = 'action'
@@ -400,9 +470,7 @@ export const useAdventureStore = defineStore('adventure', {
       this.recoveryNote = null
       savePendingRequest({ worldId, mode: 'action', input, startedAt: Date.now() })
       try {
-        const lastNarration = this.pages.length > 0
-          ? this.pages[this.pages.length - 1].narration
-          : undefined
+        const lastNarration = this.currentPage?.narration
         const config = useSettingsStore().config
         const s = useSettingsStore()
         // 玩家改写同步：若最新一页被改写，不再单独发同步请求，
@@ -466,7 +534,7 @@ export const useAdventureStore = defineStore('adventure', {
         const page: StoryPage = {
           id: createId(),
           worldId,
-          index: this.pages.length,
+          index: this.totalPages,
           playerInput: input,
           narration: result.narration,
           options: result.options,
@@ -476,12 +544,21 @@ export const useAdventureStore = defineStore('adventure', {
         if (this.worldId !== worldId) return
 
         this.pages.push(page)
+        this.totalPages += 1
+        // 窗口过大时裁掉最旧的部分，保持内存占用有界
+        if (this.pages.length > PAGE_WINDOW * 2) {
+          const drop = this.pages.length - PAGE_WINDOW
+          this.pages.splice(0, drop)
+          this.pageWindowStart += drop
+        }
         this.currentSave = result.save
         syncActiveNamesWithLorebook(this.currentSave, merged ?? world.lorebook)
         this.currentIndex = page.index
         await this.persistState()
         await this.autoSaveIfDue(page.index + 1)
         void useWorldStore().touch(worldId)
+        // 世界书条目超长时异步压缩（不阻塞本轮）
+        this.compressTouchedLore(worldId, result.loreUpdates).catch(() => {})
       } catch (e) {
         this.error = errorMessage(e, useSettingsStore().devMode)
         this.pendingRetry = null
@@ -492,30 +569,39 @@ export const useAdventureStore = defineStore('adventure', {
         clearPendingRequest()
       }
     },
-    setPage(index: number) {
-      if (index >= 0 && index < this.pages.length) {
-        this.currentIndex = index
-      }
+    async setPage(index: number) {
+      if (index < 0 || index >= this.totalPages) return
+      const inWindow = index >= this.pageWindowStart && index < this.pageWindowStart + this.pages.length
+      if (!inWindow) await this.loadWindowAround(index)
+      if (index < 0 || index >= this.totalPages) return
+      this.currentIndex = index
     },
     async rewritePage(index: number, newNarration: string) {
-      if (index < 0 || index >= this.pages.length) return
+      if (index < 0 || index >= this.totalPages) return
       const trimmed = newNarration.trim()
       if (!trimmed) return
-      const page = { ...this.pages[index], narration: trimmed, edited: true }
-      this.pages[index] = page
+      const inWindow = index >= this.pageWindowStart && index < this.pageWindowStart + this.pages.length
+      if (!inWindow) await this.loadWindowAround(index)
+      const local = index - this.pageWindowStart
+      const cur = this.pages[local]
+      if (!cur) return
+      const page = { ...cur, narration: trimmed, edited: true }
+      this.pages[local] = page
       await putPage(page)
       void useWorldStore().touch(this.worldId ?? '')
     },
     async createSavePoint(name: string) {
-      if (!this.worldId || !this.currentSave || this.pages.length === 0) return
+      if (!this.worldId || !this.currentSave || this.totalPages === 0) return
       const world = useWorldStore().currentWorld
+      // 存档点需要完整页面快照（内存只保留窗口），此处从数据库读取全部页
+      const allPages = await listPages(this.worldId)
       const sp: SavePoint = {
         id: createId(),
         worldId: this.worldId,
         name: name || `存档 ${this.savePoints.length + 1}`,
         save: clone(this.currentSave),
-        pageIndex: this.pages.length - 1,
-        pages: clone(this.pages),
+        pageIndex: this.totalPages - 1,
+        pages: clone(allPages),
         lorebook: world && Array.isArray(world.lorebook) ? clone(world.lorebook) : undefined,
         worldSetting: world ? world.worldSetting : undefined,
         panelSchema: world ? clone(world.panelSchema) : undefined,
@@ -547,17 +633,16 @@ export const useAdventureStore = defineStore('adventure', {
           : null
       if (snapshotPages) {
         await replacePages(worldId, snapshotPages)
-        if (this.worldId !== worldId) return
-        this.pages = snapshotPages
       } else {
-        const allPages = await listPages(worldId)
-        if (this.worldId !== worldId) return
         await deletePagesFrom(worldId, sp.pageIndex)
-        if (this.worldId !== worldId) return
-        this.pages = allPages.filter((p) => p.index <= sp.pageIndex)
       }
+      if (this.worldId !== worldId) return
+      this.totalPages = await countPages(worldId)
+      if (this.worldId !== worldId) return
       this.currentSave = newSave
-      this.currentIndex = this.pages.length > 0 ? this.pages.length - 1 : -1
+      this.currentIndex = this.totalPages > 0 ? this.totalPages - 1 : -1
+      await this.loadWindowAround(this.currentIndex)
+      if (this.worldId !== worldId) return
       await this.persistState()
     },
     async removeSavePoint(id: string) {
@@ -593,6 +678,8 @@ export const useAdventureStore = defineStore('adventure', {
       clearPendingRequest()
       this.currentSave = null
       this.pages = []
+      this.pageWindowStart = 0
+      this.totalPages = 0
       this.currentIndex = -1
       this.lastInput = null
       this.lastMode = null
@@ -625,11 +712,42 @@ export const useAdventureStore = defineStore('adventure', {
       await deletePagesFrom(worldId, snap.currentIndex)
       if (this.worldId !== worldId) return null
       this.currentSave = world ? normalizeSave(snap.save, world.panelSchema) : clone(snap.save)
-      this.pages = clone(snap.pages)
-      this.currentIndex = snap.currentIndex
+      this.totalPages = await countPages(worldId)
+      if (this.worldId !== worldId) return null
+      this.currentIndex = this.totalPages > 0 ? Math.min(snap.currentIndex, this.totalPages - 1) : -1
+      await this.loadWindowAround(this.currentIndex)
+      if (this.worldId !== worldId) return null
       await this.persistState()
       this.pendingRetry = null
       return snap.input
+    },
+    // 世界书条目超阈值自动压缩：只处理本轮被更新过的条目（独立 AI 请求、独立更新，不阻塞主流程）
+    async compressTouchedLore(worldId: string, updates: LoreEntry[] | undefined) {
+      const threshold = useSettingsStore().loreCompressThreshold
+      if (!threshold || threshold <= 0 || !updates || updates.length === 0) return
+      const touched = new Set(
+        updates.filter((u) => !u.remove).map((u) => (u.title ?? '').trim()).filter(Boolean),
+      )
+      if (touched.size === 0) return
+      const config = useSettingsStore().config
+      const world = useWorldStore().currentWorld
+      if (!world || world.id !== worldId) return
+      const targets = (world.lorebook ?? [])
+        .filter((e) => !e.fixed && !e.hidden && touched.has((e.title ?? '').trim()) && (e.content ?? '').length > threshold)
+        .slice(0, 2)
+      for (const e of targets) {
+        try {
+          const compressed = await compressLoreEntry(world, e, config, threshold)
+          if (this.worldId !== worldId) return
+          if (!compressed || compressed.length >= (e.content ?? '').length) continue
+          const fresh = useWorldStore().currentWorld
+          if (!fresh || !Array.isArray(fresh.lorebook)) return
+          const book = fresh.lorebook.map((x) => (x.id === e.id ? { ...x, content: compressed } : x))
+          await useWorldStore().updateWorld(worldId, { lorebook: book })
+        } catch (err) {
+          console.warn('[lore-compress] 压缩失败（已忽略）', err)
+        }
+      }
     },
     async renormalize() {
       const world = useWorldStore().currentWorld
@@ -672,9 +790,11 @@ export const useAdventureStore = defineStore('adventure', {
       if (pageNumber % interval !== 0) return
       await this.createSavePoint(`自动存档-${pageNumber}`)
     },
-    exportAdventure(): unknown | null {
+    async exportAdventure(): Promise<unknown | null> {
       const world = useWorldStore().currentWorld
-      if (!world || !this.currentSave) return null
+      const worldId = this.worldId
+      if (!world || !this.currentSave || !worldId) return null
+      const pages = await listPages(worldId)
       return {
         type: 'dreams-adventure',
         version: 1,
@@ -691,9 +811,13 @@ export const useAdventureStore = defineStore('adventure', {
         },
         currentSave: this.currentSave,
         currentIndex: this.currentIndex,
-        pages: this.pages,
+        pages,
         savePoints: this.savePoints,
       }
+    },
+    // 供导出小说等全量操作使用：从数据库读取该世界全部页面
+    async getAllPages(): Promise<StoryPage[]> {
+      return this.worldId ? listPages(this.worldId) : []
     },
     async importAdventure(raw: unknown): Promise<string> {
       const data = raw as Record<string, any>

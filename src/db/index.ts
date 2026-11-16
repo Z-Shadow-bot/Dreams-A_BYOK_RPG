@@ -145,6 +145,22 @@ export async function listPages(worldId: string): Promise<StoryPage[]> {
   return pages.sort((a, b) => a.index - b.index)
 }
 
+// 页数统计（懒加载用，无需读取正文）
+export async function countPages(worldId: string): Promise<number> {
+  return withStore<number>(STORES.pages, 'readonly', (s) => req(s.index('worldId').count(worldId)))
+}
+
+// 按 index 区间读取页面（闭区间；懒加载用，只取窗口内的页）
+export async function getPagesRange(worldId: string, start: number, end: number): Promise<StoryPage[]> {
+  if (end < start) return []
+  const pages = await withStore<StoryPage[]>(STORES.pages, 'readonly', (s) => {
+    const idx = s.index('worldId_index')
+    const range = IDBKeyRange.bound([worldId, start], [worldId, end])
+    return req(idx.getAll(range))
+  })
+  return pages.sort((a, b) => a.index - b.index)
+}
+
 export async function putPage(page: StoryPage): Promise<void> {
   await withStore(STORES.pages, 'readwrite', (s) => req(s.put(deepClone(page))))
 }

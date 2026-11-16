@@ -197,21 +197,34 @@ function applyThinking(payload: Record<string, unknown>, model: string, deepThin
     if (/deepseek/i.test(m)) payload.thinking = { type: 'disabled' }
     return
   }
+  let applied = false
   if (/deepseek/i.test(m)) {
     // DeepSeek：reasoner / 支持思考的模型
     payload.thinking = { type: 'enabled' }
+    applied = true
   } else if (/qwen/i.test(m)) {
     // 通义千问 Qwen3 系列：enable_thinking
     payload.enable_thinking = true
+    applied = true
   } else if (/glm/i.test(m)) {
     // 智谱 GLM-4.5+：thinking
     payload.thinking = { type: 'enabled' }
+    applied = true
   } else if (/gemini/i.test(m)) {
     // Google Gemini（OpenAI 兼容层）：reasoning_effort 控制思考深度
     payload.reasoning_effort = 'high'
+    applied = true
   } else if (/gpt|openai|o1|o3|o4|o5/i.test(m)) {
     // OpenAI 推理模型（o 系列 / GPT-5）：reasoning_effort
     payload.reasoning_effort = 'medium'
+    applied = true
+  }
+  if (!applied) return
+  // 思考模型多数不支持强制结构化输出：去掉 response_format，避免 400（由 extractJson 容错解析）
+  delete payload.response_format
+  // OpenAI 推理模型 / GLM / Gemini 的思考模式通常不接受 temperature：一并去掉
+  if (/gpt|openai|o1|o3|o4|o5|glm|gemini/i.test(m)) {
+    delete payload.temperature
   }
 }
 

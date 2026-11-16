@@ -15,7 +15,6 @@ const API_PROFILES_KEY = 'api_profiles'
 const DEV_MODE_KEY = 'dev_mode'
 const BGM_MUTED_KEY = 'bgm_muted'
 const BAG_DETAIL_KEY = 'bag_detail'
-const TRUNCATE_STRATEGY_KEY = 'truncate_strategy'
 const NARRATIVE_SPEED_KEY = 'narrative_speed'
 const NARRATIVE_DETAIL_KEY = 'narrative_detail'
 const AUTO_SAVE_KEY = 'auto_save'
@@ -29,6 +28,7 @@ const LORE_LIMIT_KEY = 'lore_limit'
 const LORE_BUDGET_KEY = 'lore_budget'
 const LINK_BUDGET_KEY = 'link_budget'
 const WORLD_SETTING_MAX_KEY = 'world_setting_max'
+const LORE_COMPRESS_THRESHOLD_KEY = 'lore_compress_threshold'
 const OPTION_COUNT_KEY = 'option_count'
 const FONT_SIZE_KEY = 'font_size'
 const TEXT_COLOR_KEY = 'text_color'
@@ -44,8 +44,6 @@ const DEFAULT_CONFIG: APIConfig = {
   narrationMax: 500,
   deepThink: false,
 }
-
-export type TruncateStrategy = 'diff' | 'split'
 
 export type Difficulty = 'easy' | 'normal' | 'hard' | 'nightmare'
 
@@ -66,7 +64,6 @@ export const useSettingsStore = defineStore('settings', {
     devMode: false,
     muted: false,
     detailedBag: false, // 精细化背包描述：对物品生成更精细的 state 描述
-    truncateStrategy: 'diff' as TruncateStrategy, // 输出截断自动重试策略：diff 精简修改指令 / split 拆分输出
     narrativeSpeed: 'normal' as NarrativeSpeed, // 叙事推进速度：精细/正常/快速/极速，控制每轮叙事推进的幅度
     narrativeDetail: 'normal' as NarrativeDetail, // 描写细致程度：简洁/常规/精细/极致，仅影响叙事描写，不影响存档与世界书
     autoSave: true, // 自动存档
@@ -80,6 +77,7 @@ export const useSettingsStore = defineStore('settings', {
     loreBudget: 4000, // 世界书注入字符预算上限
     linkBudget: 2000, // 关联条目额外字符预算
     worldSettingMax: 3000, // 核心设定字数上限
+    loreCompressThreshold: 1200, // 世界书单个条目超过该字符数时自动压缩（0 表示关闭）
     optionCount: 3, // 每轮选项数量上限
     fontSize: 16, // 正文字体大小（px）
     textColor: '#ffffff', // 全局文本颜色
@@ -122,12 +120,6 @@ export const useSettingsStore = defineStore('settings', {
         this.detailedBag = !!d
       } catch {
         this.detailedBag = false
-      }
-      try {
-        const s = await getSetting<string>(TRUNCATE_STRATEGY_KEY)
-        this.truncateStrategy = s === 'split' ? 'split' : 'diff'
-      } catch {
-        this.truncateStrategy = 'diff'
       }
       try {
         const ns = await getSetting<string>(NARRATIVE_SPEED_KEY)
@@ -210,6 +202,12 @@ export const useSettingsStore = defineStore('settings', {
         this.worldSettingMax = typeof wsm === 'number' && wsm > 0 ? Math.round(wsm) : 3000
       } catch {
         this.worldSettingMax = 3000
+      }
+      try {
+        const lct = await getSetting<number>(LORE_COMPRESS_THRESHOLD_KEY)
+        this.loreCompressThreshold = typeof lct === 'number' && isFinite(lct) && lct >= 0 ? Math.round(lct) : 1200
+      } catch {
+        this.loreCompressThreshold = 1200
       }
       try {
         const oc = await getSetting<number>(OPTION_COUNT_KEY)
@@ -319,14 +317,6 @@ export const useSettingsStore = defineStore('settings', {
         // 保存失败不阻塞开关生效
       }
     },
-    async setTruncateStrategy(v: TruncateStrategy) {
-      this.truncateStrategy = v
-      try {
-        await putSetting(TRUNCATE_STRATEGY_KEY, v)
-      } catch {
-        // 保存失败不阻塞设置生效
-      }
-    },
     async setNarrativeSpeed(v: NarrativeSpeed) {
       this.narrativeSpeed = v
       try {
@@ -419,6 +409,11 @@ export const useSettingsStore = defineStore('settings', {
       const n = typeof v === 'number' && isFinite(v) && v > 0 ? Math.round(v) : 3000
       this.worldSettingMax = n
       try { await putSetting(WORLD_SETTING_MAX_KEY, n) } catch { /* ignore */ }
+    },
+    async setLoreCompressThreshold(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 1200
+      this.loreCompressThreshold = n
+      try { await putSetting(LORE_COMPRESS_THRESHOLD_KEY, n) } catch { /* ignore */ }
     },
     async setOptionCount(v: number) {
       const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 3
