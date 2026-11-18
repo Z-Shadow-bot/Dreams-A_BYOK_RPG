@@ -1,4 +1,5 @@
 import type { World, SaveData, PanelField, LoreEntry } from '@/types'
+import { NARRATOR_ID } from '@/types'
 import type { Difficulty, NarrativeSpeed, NarrativeDetail, EventFrequency } from '@/stores/settings'
 
 // 每轮注入世界书条目的预算上限（字符）
@@ -155,6 +156,8 @@ export function buildOutputFormat(_narrationMin: number, narrationMax: number, u
   "loreUpdates": [
     { "title": "已有条目（增量追加）", "appendContent": "要追加的新信息", "appendTo": "关键记忆" },
     { "title": "已有条目（增量删除）", "removeLines": ["已过时的旧描述片段"] },
+    { "title": "人物条目（记忆增量）", "memoryAppend": "第3天：答应带你同行" },
+    { "title": "人物条目（设定变更）", "personaAppend": "左手已残废，不再用剑" },
     { "title": "新条目或需整体改写", "aliases": ["别名", "曾用称呼"], "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
     { "title": "已死亡/损毁的条目", "content": "【已死亡】……（保留条目并改写为终态，切勿删除）" },
     { "title": "重复或误记的条目", "remove": true }
@@ -190,6 +193,8 @@ JSON 语法硬性要求（违反任一条都会导致解析失败）：
   "loreUpdates": [
     { "title": "已有条目（增量追加）", "appendContent": "要追加的新信息", "appendTo": "关键记忆" },
     { "title": "已有条目（增量删除）", "removeLines": ["已过时的旧描述片段"] },
+    { "title": "人物条目（记忆增量）", "memoryAppend": "第3天：答应带你同行" },
+    { "title": "人物条目（设定变更）", "personaAppend": "左手已残废，不再用剑" },
     { "title": "新条目或需整体改写", "aliases": ["别名", "曾用称呼"], "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
     { "title": "已死亡/损毁的条目", "content": "【已死亡】……（保留条目并改写为终态，切勿删除）" },
     { "title": "重复或误记的条目", "remove": true }
@@ -317,16 +322,43 @@ export function bagDetailRule(enabled: boolean): string {
 // 根据"上下文文本"挑出本轮该注入的世界书条目并组装注入区文本；无世界书时返回空串
 // sceneValue：当前场景值（如 panel[sceneField]），tags 与场景值精确相等优先，其次双向包含
 // 上下文匹配：标签在上下文中出现的次数越多相关度越高（次数加权）
-export function buildLoreInjection(world: World, context: string, sceneValue?: string, activeNames?: string[], cfg?: LoreInjectionConfig): string {
+// 条目对某个观察者是否可见。
+// 未指定 viewerCharId（普通模式单 AI / 构建世界生成）时一律可见，保持向后兼容。
+export function loreVisibleTo(e: LoreEntry, viewerCharId?: string): boolean {
+  const acc = e.access
+  if (!acc || acc.mode === 'public') return true
+  if (viewerCharId === undefined) return true
+  if (viewerCharId === NARRATOR_ID) return true
+  if (acc.mode === 'secret') return false
+  if (acc.mode === 'knownBy') return (acc.who ?? []).includes(viewerCharId)
+  return true
+}
+
+// 条目的可注入正文。
+// 人物条目：persona（设定）+ memory（记忆）；memory 仅当 viewerCharId 为本人（或未指定=普通模式）时可见。
+export function loreEntryText(e: LoreEntry, viewerCharId?: string): string {
+  if (e.isCharacter) {
+    const persona = (e.persona ?? e.content ?? '').trim()
+    const memoryVisible = viewerCharId === undefined || viewerCharId === e.id
+    const memory = memoryVisible ? (e.memory ?? '').trim() : ''
+    if (!persona && !memory) return ''
+    if (!memory) return persona
+    return persona ? `${persona}\n【记忆】\n${memory}` : `【记忆】\n${memory}`
+  }
+  return (e.content ?? '').trim()
+}
+
+export function buildLoreInjection(world: World, context: string, sceneValue?: string, activeNames?: string[], cfg?: LoreInjectionConfig, viewerCharId?: string): string {
   const entries = world.lorebook ?? []
   if (entries.length === 0) return ''
   const scene = (sceneValue ?? '').trim()
   const ctx = context || ''
   const loreBudget = cfg?.loreBudget && cfg.loreBudget > 0 ? cfg.loreBudget : LORE_BUDGET
-  const scored: Array<{ e: LoreEntry; rank: number }> = []
+  const scored: Array<{ e: LoreEntry; rank: number; text: string }> = []
   for (const e of entries) {
-    const content = (e.content ?? '').trim()
-    if (!content) continue
+    if (!loreVisibleTo(e, viewerCharId)) continue
+    const text = loreEntryText(e, viewerCharId)
+    if (!text) continue
     const tags = Array.isArray(e.tags) ? e.tags.filter((t) => typeof t === 'string' && t.trim()) : []
     const aliases = Array.isArray(e.aliases) ? e.aliases.filter((t) => typeof t === 'string' && t.trim()) : []
     // 匹配键 = 标签 + 别名：别名同样参与检索，确保改名后仍能被旧称呼命中
@@ -352,7 +384,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
     } else {
       rank = tagHitRank(ctx, keys) // 无场景值，仅做上下文匹配
     }
-    scored.push({ e, rank })
+    scored.push({ e, rank, text })
   }
   scored.sort((a, b) => a.rank - b.rank)
   let used = 0
@@ -363,7 +395,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
   for (const s of requiredEntries) {
     picked.push(s.e)
     pickedIds.add(s.e.id)
-    used += s.e.content.length
+    used += s.text.length
   }
   // activeNames 对应的条目强制注入（当前交互的地点/人物）
   if (activeNames && activeNames.length > 0) {
@@ -374,7 +406,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
       if (names.some((n) => activeSet.has(n))) {
         picked.push(s.e)
         pickedIds.add(s.e.id)
-        used += s.e.content.length
+        used += s.text.length
       }
     }
   }
@@ -384,7 +416,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
     if (s.e.required) continue
     if (pickedIds.has(s.e.id)) continue
     if (picked.length >= loreLimit) break
-    const size = s.e.content.length
+    const size = s.text.length
     if (used + size > loreBudget) continue
     picked.push(s.e)
     pickedIds.add(s.e.id)
@@ -404,7 +436,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
     for (const linkTitle of links) {
       const target = byTitle.get(linkTitle.trim())
       if (!target || pickedIds.has(target.id)) continue
-      const size = target.content.length
+      const size = loreEntryText(target, viewerCharId).length
       if (linkUsed + size > linkBudget) continue
       picked.push(target)
       pickedIds.add(target.id)
@@ -422,7 +454,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
     if (e.fixed) flags.push('固定')
     if (e.hidden) flags.push('隐藏·彩蛋')
     const flagStr = flags.length ? `（${flags.join('；')}）` : ''
-    return `- ${head}${flagStr}${tags}${aliasStr}\n  ${e.content.trim()}`
+    return `- ${head}${flagStr}${tags}${aliasStr}\n  ${loreEntryText(e, viewerCharId)}`
   })
   return `
 
@@ -434,6 +466,7 @@ ${lines.join('\n')}
 # 世界书使用规则
 - 世界书条目必须与存档（overview、inventory、activeLocations、activeCharacters 等）保持一致，不得互相矛盾；若剧情推进改变了条目描述的事物，应通过 loreUpdates 同步更新该条目。
 - 条目内容增量更新（优先，省 token 且更稳）：更新已有条目时，优先只输出变化——appendContent 追加新信息（可用 appendTo 指定追加到某个【栏目】末尾，如"关键记忆"）；removeLines 删除包含指定子串的旧行；只有需要整体重构/合并时才用 content 输出完整新内容。未提供 content 时，条目原有内容保持不变，不会被清空。
+- 人物条目（isCharacter）分「persona 设定」与「memory 记忆」两块：persona 只放身份/性格/关系基础/能力等相对稳定的信息；memory 放经历、承诺、状态变化，每条以时间开头（如"第12天：……"）。更新人物时优先用 memoryAppend 追加记忆、personaAppend 追加设定变化；只有需要整体重写时才输出 persona/memory 全文。非人物条目继续用 content/appendContent。
 - 若玩家指令与某世界书设定冲突：不要拒绝玩家，也不得歪曲或悄悄改写设定来迎合玩家；应当推断"在该设定约束下，玩家行动会产生的合理、自然后果"并如实呈现。例如：石碑被设定为不可破坏，玩家执意挥锤猛砸，则锤柄崩裂、虎口震麻，石碑纹丝不动。
 - 地点与人物信息全部通过世界书条目存储：每个地点对应一个 isLocation:true 条目，每个人物对应一个 isCharacter:true 条目。条目 title 用地点名/人名，content 记录详细情况（地点描述、人物介绍与态度、记忆与关系变化等）。不要在存档 map/characters 中存储这些信息（始终保持空数组）。
   - 地点条目的 tags 应包含该地点可能出现的人物名字、地点别名、相关势力/组织等，以便人物在场时能命中注入。
@@ -735,6 +768,8 @@ export function buildActionRecoverySplitSavePrompt(
   "loreUpdates": [
     { "title": "已有条目（增量追加）", "appendContent": "要追加的新信息", "appendTo": "关键记忆" },
     { "title": "已有条目（增量删除）", "removeLines": ["已过时的旧描述片段"] },
+    { "title": "人物条目（记忆增量）", "memoryAppend": "第3天：答应带你同行" },
+    { "title": "人物条目（设定变更）", "personaAppend": "左手已残废，不再用剑" },
     { "title": "新条目或需整体改写", "aliases": ["别名", "曾用称呼"], "tags": ["标签"], "content": "正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
     { "title": "已死亡/损毁的条目", "content": "【已死亡】……（保留条目并改写为终态，切勿删除）" },
     { "title": "重复或误记的条目", "remove": true }
@@ -744,6 +779,7 @@ export function buildActionRecoverySplitSavePrompt(
 
 【loreUpdates 规则】
 - 增量优先（省 token 且更稳）：更新已有条目时，优先只输出变化——用 appendContent 追加新信息（可用 appendTo 指定追加到某个【栏目】末尾）；用 removeLines 删除内容中包含指定子串的旧行；只有需要整体重构/合并时才用 content 输出完整新内容。未提供 content 时，条目原有内容保持不动（不会被清空）。
+- 人物条目（isCharacter）分「persona 设定」与「memory 记忆」两块：persona 只放身份/性格/关系基础/能力等相对稳定的信息；memory 放经历、承诺、状态变化，每条以时间开头（如"第12天：……"）。更新人物时优先用 memoryAppend 追加记忆、personaAppend 追加设定变化；只有需要整体重写时才输出 persona/memory 全文。非人物条目继续用 content/appendContent。
 - 终态标注：事物死亡/摧毁/损毁/完结时，保留条目并把 content 改写为终态（开头加"【已死亡】""【已损毁】"等前缀），切勿删除
 - 禁止重建：曾出现过的实体（含已终结的）不得新建条目，必须先查重并复用原条目
 - 别名与合并：实体改名时更新原条目（title 改新名、旧称呼写入 aliases），不得新建；发现当前生效条目中有指向同一实体的重复条目时，合并为一条（其余标题并入 aliases 后 remove）

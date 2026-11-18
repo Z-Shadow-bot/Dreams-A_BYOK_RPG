@@ -17,15 +17,17 @@ import {
   generateAction,
   generateCharacter,
   normalizeSave,
+  applySavePatch,
   ensureOptions,
-  applyLoreContentDelta,
   compressLoreEntry,
 } from '@/ai/service'
+import { mergeLoreUpdates } from '@/utils/lore'
 import { errorMessage } from '@/ai/client'
 import { createId } from '@/types'
-import type { SaveData, StoryPage, SavePoint, WorldState, PanelField, LoreEntry, World, PresetCharacter } from '@/types'
+import type { SaveData, StoryPage, SavePoint, WorldState, PanelField, LoreEntry, PresetCharacter, MaState, AgentState, StoryMessage, MaTurnSnapshot } from '@/types'
 import { useSettingsStore } from './settings'
 import { useWorldStore, normalizeImportedLorebook } from './world'
+import { useMaStore } from './multiagent'
 
 // 冒险页内存窗口大小：只保留当前查看位置附近的若干页，其余按需从 IndexedDB 懒加载
 const PAGE_WINDOW = 60
@@ -67,93 +69,6 @@ function clearPendingRequest(): void {
 // 归一化的比对键：去空格并统一大小写，用于 title/aliases 匹配
 function loreKey(s: string | undefined): string {
   return (s ?? '').trim().toLowerCase()
-}
-
-// 判断更新项（title + aliases）是否指向已有条目 b（title 或 aliases 任一命中即为同一实体）
-function loreMatches(b: LoreEntry, title: string, aliases: string[]): boolean {
-  const incoming = [title, ...aliases].map(loreKey).filter((k) => !!k)
-  if (incoming.length === 0) return false
-  const targets = [b.title ?? '', ...(b.aliases ?? [])].map(loreKey).filter((k) => !!k)
-  return incoming.some((k) => targets.includes(k))
-}
-
-// 将 AI 返回的世界书更新合并进现有世界书：按 title/aliases 匹配更新（含同义不同名合并），否则新增
-// remove 标记：仅当条目完全重复或记录错误时 AI 返回 { title, remove: true }，删除对应条目
-// 仅当世界已拥有 lorebook 字段时才合并（避免旧世界被意外创建世界书）
-function mergeLoreUpdates(world: World, updates: LoreEntry[] | undefined): LoreEntry[] | null {
-  if (!updates || updates.length === 0) return null
-  if (!Array.isArray(world.lorebook)) return null
-  const book: LoreEntry[] = world.lorebook.map((e) => ({ ...e }))
-  for (const u of updates) {
-    const title = (u.title ?? '').trim()
-    const aliases = (u.aliases ?? []).map((a) => a.trim()).filter((a) => !!a)
-    // 按 title/aliases 双向匹配定位已有条目（同义不同名视为同一条）
-    const idx = title || aliases.length > 0 ? book.findIndex((b) => loreMatches(b, title, aliases)) : -1
-    // 删除条目：按 title/aliases 匹配删除（fixed 条目不可删除）
-    if (u.remove === true) {
-      if (idx >= 0 && !book[idx].fixed) {
-        book.splice(idx, 1)
-      }
-      continue
-    }
-    if (idx >= 0) {
-      const old = book[idx]
-      // 固定条目：AI 不得修改内容/tags/title/fixed/links，仅允许显式 hidden:false 移除隐藏（彩蛋出场）
-      if (old.fixed) {
-        if (u.hidden === false) {
-          book[idx] = { ...old, hidden: undefined }
-        }
-        continue
-      }
-      const newTitle = title || old.title
-      // 合并别名：保留旧别名；改名时把旧标题转为别名；并入本次新别名
-      const mergedAliases = new Set<string>()
-      for (const a of old.aliases ?? []) mergedAliases.add(a)
-      for (const a of aliases) mergedAliases.add(a)
-      if ((old.title ?? '').trim() && loreKey(old.title) !== loreKey(newTitle)) {
-        mergedAliases.add((old.title ?? '').trim())
-      }
-      // 去掉与当前标题重复的别名
-      const titleKey = loreKey(newTitle)
-      for (const a of [...mergedAliases]) {
-        if (loreKey(a) === titleKey) mergedAliases.delete(a)
-      }
-      book[idx] = {
-        ...old,
-        title: newTitle,
-        aliases: mergedAliases.size > 0 ? [...mergedAliases] : undefined,
-        // 未提供（空）时保留旧值；提供则覆盖——增量更新只发变化时不会误清空
-        tags: u.tags.length > 0 ? u.tags : old.tags,
-        content: applyLoreContentDelta(old.content, u),
-        required: u.required !== undefined ? u.required : old.required,
-        fixed: u.fixed !== undefined ? u.fixed : old.fixed,
-        links: u.links !== undefined ? u.links : old.links,
-        hidden: u.hidden !== undefined ? u.hidden : old.hidden,
-        isLocation: u.isLocation !== undefined ? u.isLocation : old.isLocation,
-        isCharacter: u.isCharacter !== undefined ? u.isCharacter : old.isCharacter,
-        lastVisitedTime: u.lastVisitedTime !== undefined ? u.lastVisitedTime : old.lastVisitedTime,
-      }
-    } else {
-      // 新条目：以 content（或 appendContent）为正文，并剥离增量字段
-      const newContent = (u.content || u.appendContent || '').trim()
-      if (!newContent) continue
-      book.push({
-        id: u.id,
-        title: u.title,
-        aliases: aliases.length > 0 ? aliases : undefined,
-        tags: u.tags,
-        content: newContent,
-        required: u.required,
-        fixed: u.fixed,
-        links: u.links,
-        hidden: u.hidden,
-        isLocation: u.isLocation,
-        isCharacter: u.isCharacter,
-        lastVisitedTime: u.lastVisitedTime,
-      })
-    }
-  }
-  return book
 }
 
 // 用世界书的 title/aliases 校正存档中的 active 名称：
@@ -224,6 +139,8 @@ export const useAdventureStore = defineStore('adventure', {
       currentIndex: number
       lorebook: LoreEntry[] | null
     },
+    // 多智能体：本轮回退快照（每次提交前整体覆盖，重试时整体退回）
+    pendingMaTurn: null as MaTurnSnapshot | null,
     recoveryNote: null as string | null, // 截断自动降级时展示的提示文案
     loadingEndTime: 0, // 最近一次生成完成的毫秒时间戳（用于返回冒险页时判断是否需要滚动到顶部）
     npcSurpriseCounter: 0, // 距下一次"久未见 NPC 随机引入"还剩的回合数
@@ -279,9 +196,9 @@ export const useAdventureStore = defineStore('adventure', {
         this.currentIndex = state.currentIndex
       }
       // 恢复待重试状态：上次行动出错时保存的回退点，退出重进后仍可点「重试」回退
-      if (state?.pendingRetry) {
-        this.pendingRetry = state.pendingRetry
-      }
+      // 注意必须显式置空：切换世界时若不加 else，会残留上一个世界的快照
+      this.pendingRetry = state?.pendingRetry ?? null
+      this.pendingMaTurn = state?.pendingMaTurn ?? null
       // 恢复"久未见 NPC 随机引入"计数；无记录（或非正数）则随机 1-10
       this.npcSurpriseCounter = state?.npcSurpriseCounter && state.npcSurpriseCounter > 0
         ? state.npcSurpriseCounter
@@ -328,6 +245,7 @@ export const useAdventureStore = defineStore('adventure', {
         currentSave: clone(this.currentSave as SaveData),
         currentIndex: this.currentIndex,
         pendingRetry: this.pendingRetry ? clone(this.pendingRetry) : null,
+        pendingMaTurn: this.pendingMaTurn ? clone(this.pendingMaTurn) : null,
         npcSurpriseCounter: this.npcSurpriseCounter,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -365,6 +283,7 @@ export const useAdventureStore = defineStore('adventure', {
       this.lastStartOpts = opts
       this.lastHiddenPreset = hiddenPreset
       this.pendingRetry = null
+      this.pendingMaTurn = null
       this.loading = true
       this.error = null
       this.recoveryNote = null
@@ -406,7 +325,7 @@ export const useAdventureStore = defineStore('adventure', {
         result.options = await ensureOptions(result.options, result.narration, config, useSettingsStore().optionFallback)
         await deletePagesFrom(worldId, -1)
         if (this.worldId !== worldId) return
-        const merged = mergeLoreUpdates(freshWorld, result.loreUpdates)
+        const merged = Array.isArray(freshWorld.lorebook) ? mergeLoreUpdates(freshWorld.lorebook, result.loreUpdates) : null
         if (merged) {
           await useWorldStore().updateWorld(worldId, { lorebook: merged })
         }
@@ -527,7 +446,7 @@ export const useAdventureStore = defineStore('adventure', {
             if (bgmTag) this.eggBgmPending = bgmTag.slice('eggBgm:'.length)
           }
         }
-        const merged = mergeLoreUpdates(world, result.loreUpdates)
+        const merged = Array.isArray(world.lorebook) ? mergeLoreUpdates(world.lorebook, result.loreUpdates) : null
         if (merged) {
           await useWorldStore().updateWorld(worldId, { lorebook: merged })
         }
@@ -590,11 +509,80 @@ export const useAdventureStore = defineStore('adventure', {
       await putPage(page)
       void useWorldStore().touch(this.worldId ?? '')
     },
-    async createSavePoint(name: string) {
-      if (!this.worldId || !this.currentSave || this.totalPages === 0) return
+    // 多智能体：提交前捕获完整快照（每次覆盖旧快照），供「重试」整体退回
+    async captureMaTurn(input?: string) {
+      const world = useWorldStore().currentWorld
+      const worldId = this.worldId
+      const maStore = useMaStore()
+      if (!world || !worldId || !maStore.ma || maStore.worldId !== worldId) {
+        this.pendingMaTurn = null
+        return
+      }
+      const beforeSeq = maStore.messages.reduce((m, x) => Math.max(m, x.seq), -1)
+      this.pendingMaTurn = {
+        beforeSeq,
+        input: (input ?? '').trim() || undefined,
+        ma: clone(maStore.ma),
+        agents: clone(maStore.agents),
+        lorebook: Array.isArray(world.lorebook) ? clone(world.lorebook) : undefined,
+        save: this.currentSave ? clone(this.currentSave) : undefined,
+        createdAt: Date.now(),
+      }
+      await this.persistState()
+    },
+
+    // 多智能体：整体退回上一轮，返回当时的输入（填回输入框，可修改后再发）
+    async retryMaTurn(): Promise<string | null> {
+      const snap = this.pendingMaTurn
+      const worldId = this.worldId
+      if (!snap || !worldId) return null
+      const maStore = useMaStore()
+      const keep = maStore.messages.filter((m) => m.seq <= snap.beforeSeq)
+      await maStore.restoreSnapshot(worldId, clone(snap.ma), clone(snap.agents), keep)
+      if (snap.lorebook !== undefined) {
+        try {
+          await useWorldStore().updateWorld(worldId, { lorebook: clone(snap.lorebook) })
+        } catch {
+          /* 世界可能已被删除，忽略 */
+        }
+      }
+      if (snap.save) {
+        this.currentSave = clone(snap.save)
+      }
+      this.pendingMaTurn = null
+      await this.persistState()
+      return snap.input ?? null
+    },
+
+    // 多智能体：应用旁白产生的存档变更（由视图层在每轮结束后调用）
+    async applyExternalSavePatch(patch: unknown) {
+      const worldStore = useWorldStore()
+      const world = worldStore.currentWorld
+      const worldId = this.worldId
+      if (!world || !worldId) return
+      const base = this.currentSave
+      if (!base) return
+      const next = normalizeSave(applySavePatch(base, patch), world.panelSchema)
+      this.currentSave = next
+      await this.persistState()
+    },
+    async createSavePoint(name: string) {      if (!this.worldId || !this.currentSave || this.totalPages === 0) return
       const world = useWorldStore().currentWorld
       // 存档点需要完整页面快照（内存只保留窗口），此处从数据库读取全部页
       const allPages = await listPages(this.worldId)
+      // 多智能体世界：额外快照 maState / agents / messages，读档时才能完全还原
+      let maSnap: { maState?: MaState; agents?: AgentState[]; messages?: StoryMessage[] } = {}
+      if (world?.multiAgent) {
+        const maStore = useMaStore()
+        if (maStore.worldId !== this.worldId) await maStore.open(this.worldId)
+        if (maStore.ma && maStore.worldId === this.worldId) {
+          maSnap = {
+            maState: clone(maStore.ma),
+            agents: clone(maStore.agents),
+            messages: clone(maStore.messages),
+          }
+        }
+      }
       const sp: SavePoint = {
         id: createId(),
         worldId: this.worldId,
@@ -605,6 +593,7 @@ export const useAdventureStore = defineStore('adventure', {
         lorebook: world && Array.isArray(world.lorebook) ? clone(world.lorebook) : undefined,
         worldSetting: world ? world.worldSetting : undefined,
         panelSchema: world ? clone(world.panelSchema) : undefined,
+        ...maSnap,
         createdAt: Date.now(),
       }
       await putSavePoint(sp)
@@ -613,6 +602,7 @@ export const useAdventureStore = defineStore('adventure', {
     async loadSavePoint(sp: SavePoint) {
       const worldId = this.worldId
       if (!worldId) return
+      this.pendingMaTurn = null
       const worldStore = useWorldStore()
       // 恢复存档时的完整世界快照（核心设定 + 面板字段 + 世界书），确保时间线一致
       if (sp.lorebook !== undefined || sp.worldSetting !== undefined || sp.panelSchema !== undefined) {
@@ -643,6 +633,11 @@ export const useAdventureStore = defineStore('adventure', {
       this.currentIndex = this.totalPages > 0 ? this.totalPages - 1 : -1
       await this.loadWindowAround(this.currentIndex)
       if (this.worldId !== worldId) return
+      // 多智能体快照：整体替换消息流与角色状态（rev 回退使在途异步写入失效）
+      if (sp.maState && Array.isArray(sp.agents)) {
+        await useMaStore().restoreSnapshot(worldId, clone(sp.maState), clone(sp.agents), clone(sp.messages ?? []))
+        if (this.worldId !== worldId) return
+      }
       await this.persistState()
     },
     async removeSavePoint(id: string) {
@@ -675,6 +670,11 @@ export const useAdventureStore = defineStore('adventure', {
       }
       await deleteState(worldId)
       if (this.worldId !== worldId) return
+      // 多智能体数据一并清空（消息流、角色私有记忆、时钟与伏笔）
+      if (w?.multiAgent) {
+        await useMaStore().clearAll()
+        if (this.worldId !== worldId) return
+      }
       clearPendingRequest()
       this.currentSave = null
       this.pages = []
@@ -687,6 +687,7 @@ export const useAdventureStore = defineStore('adventure', {
       this.lastHiddenPreset = null
       this.eggBgmPending = null
       this.pendingRetry = null
+      this.pendingMaTurn = null
       this.recoveryNote = null
       this.draftInput = ''
       this.error = null
@@ -733,7 +734,8 @@ export const useAdventureStore = defineStore('adventure', {
       const world = useWorldStore().currentWorld
       if (!world || world.id !== worldId) return
       const targets = (world.lorebook ?? [])
-        .filter((e) => !e.fixed && !e.hidden && touched.has((e.title ?? '').trim()) && (e.content ?? '').length > threshold)
+        // 人物条目走 persona/memory 分层压缩（P4 实现），此处先跳过，避免压缩空 content
+        .filter((e) => !e.fixed && !e.hidden && !e.isCharacter && touched.has((e.title ?? '').trim()) && (e.content ?? '').length > threshold)
         .slice(0, 2)
       for (const e of targets) {
         try {
@@ -795,6 +797,21 @@ export const useAdventureStore = defineStore('adventure', {
       const worldId = this.worldId
       if (!world || !this.currentSave || !worldId) return null
       const pages = await listPages(worldId)
+      // 多智能体：附带完整消息流与角色私有状态
+      let maPart: Record<string, unknown> = {}
+      if (world.multiAgent) {
+        const maStore = useMaStore()
+        if (maStore.worldId !== worldId) await maStore.open(worldId)
+        if (maStore.ma && maStore.worldId === worldId) {
+          maPart = {
+            multiAgent: {
+              maState: clone(maStore.ma),
+              agents: clone(maStore.agents),
+              messages: clone(maStore.messages),
+            },
+          }
+        }
+      }
       return {
         type: 'dreams-adventure',
         version: 1,
@@ -808,11 +825,13 @@ export const useAdventureStore = defineStore('adventure', {
           ...(world.bgm ? { bgm: clone(world.bgm) } : {}),
           ...(world.presetCharacters ? { presetCharacters: clone(world.presetCharacters) } : {}),
           ...(world.characterFallback ? { characterFallback: world.characterFallback } : {}),
+          ...(world.multiAgent ? { multiAgent: true } : {}),
         },
         currentSave: this.currentSave,
         currentIndex: this.currentIndex,
         pages,
         savePoints: this.savePoints,
+        ...maPart,
       }
     },
     // 供导出小说等全量操作使用：从数据库读取该世界全部页面
@@ -852,7 +871,7 @@ export const useAdventureStore = defineStore('adventure', {
 
       const rawLorebook = Array.isArray(worldData.lorebook) ? normalizeImportedLorebook(worldData.lorebook) : []
       const worldStore = useWorldStore()
-      const world = await worldStore.createWorld(name, worldSetting, panelSchema, rawLorebook)
+      const world = await worldStore.createWorld(name, worldSetting, panelSchema, rawLorebook, worldData.multiAgent === true)
 
       const dlcUpdates: {
         dlcId?: string
@@ -967,6 +986,13 @@ export const useAdventureStore = defineStore('adventure', {
             pageIndex: indexMap.get(origPageIndex) ?? Math.min(origPageIndex, validRawPages.length - 1),
             pages: spPages && spPages.length > 0 ? spPages : undefined,
             lorebook: spLorebook,
+            ...(sp.maState ? { maState: { ...sp.maState, worldId: world.id } } : {}),
+            ...(Array.isArray(sp.agents)
+              ? { agents: (sp.agents as AgentState[]).map((a) => ({ ...a, worldId: world.id })) }
+              : {}),
+            ...(Array.isArray(sp.messages)
+              ? { messages: (sp.messages as StoryMessage[]).map((m) => ({ ...m, worldId: world.id })) }
+              : {}),
             createdAt: typeof sp.createdAt === 'number' ? sp.createdAt : Date.now(),
           })
         }
@@ -982,6 +1008,21 @@ export const useAdventureStore = defineStore('adventure', {
           createdAt: Date.now(),
           updatedAt: Date.now(),
         })
+
+        // 多智能体：恢复消息流与角色私有状态
+        const maRaw = data.multiAgent as Record<string, any> | undefined
+        if (worldData.multiAgent === true && maRaw && maRaw.maState && typeof maRaw.maState === 'object') {
+          const maState = { ...(maRaw.maState as MaState), worldId: world.id }
+          const agents = (Array.isArray(maRaw.agents) ? maRaw.agents : []).map((a: any) => ({
+            ...a,
+            worldId: world.id,
+          })) as AgentState[]
+          const messages = (Array.isArray(maRaw.messages) ? maRaw.messages : []).map((m: any) => ({
+            ...m,
+            worldId: world.id,
+          })) as StoryMessage[]
+          await useMaStore().restoreSnapshot(world.id, maState, agents, messages)
+        }
       } catch (e) {
         await worldStore.removeWorld(world.id)
         throw e

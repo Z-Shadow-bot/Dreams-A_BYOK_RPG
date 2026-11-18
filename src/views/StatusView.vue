@@ -167,6 +167,8 @@ function addSkill() {
 const editingLore = ref<{ type: 'location' | 'character' | 'lore'; title: string } | null>(null)
 const loreEditName = ref('')
 const loreEditDesc = ref('')
+const loreEditPersona = ref('')
+const loreEditMemory = ref('')
 
 // 按编辑类型在 world.lorebook 中定位条目：location/character 按属性，lore 为任意非隐藏条目
 function findLoreEntry(type: 'location' | 'character' | 'lore', title: string) {
@@ -186,7 +188,15 @@ function startEditLore(type: 'location' | 'character' | 'lore', title: string) {
   if (!e) return
   editingLore.value = { type, title }
   loreEditName.value = e.title ?? ''
-  loreEditDesc.value = e.content ?? ''
+  if (e.isCharacter) {
+    loreEditPersona.value = e.persona ?? e.content ?? ''
+    loreEditMemory.value = e.memory ?? ''
+    loreEditDesc.value = ''
+  } else {
+    loreEditPersona.value = ''
+    loreEditMemory.value = ''
+    loreEditDesc.value = e.content ?? ''
+  }
 }
 function saveEditLore() {
   const world = worldStore.currentWorld
@@ -195,7 +205,15 @@ function saveEditLore() {
   const e = findLoreEntry(type, title)
   if (e) {
     e.title = loreEditName.value.trim() || e.title
-    e.content = loreEditDesc.value
+    if (e.isCharacter) {
+      // 人物条目：设定与记忆分开保存；content 清空（已迁入 persona，避免注入时重复）
+      e.persona = loreEditPersona.value
+      e.memory = loreEditMemory.value
+      e.content = ''
+      e.migrated = true
+    } else {
+      e.content = loreEditDesc.value
+    }
   }
   editingLore.value = null
   void worldStore.updateWorld(world.id, { lorebook: world.lorebook })
@@ -305,13 +323,17 @@ const loreOverview = computed(() => {
   const world = worldStore.currentWorld
   if (!world?.lorebook?.length) return []
   return world.lorebook.filter((e) => !e.hidden).map((e) => {
+    const persona = (e.persona ?? e.content ?? '').trim()
+    const memory = (e.memory ?? '').trim()
+    const text = e.isCharacter && memory ? `${persona}\n【记忆】\n${memory}` : persona
     return {
       id: e.id,
       title: e.title ?? '（无标题）',
       tags: e.tags ?? [],
       required: !!e.required,
       fixed: !!e.fixed,
-      content: e.content ?? '',
+      content: text,
+      isCharacter: e.isCharacter === true,
     }
   })
 })
@@ -376,7 +398,8 @@ const characterList = computed(() => {
     return loreCharacters
       .map((e) => ({
         name: e.title ?? '（无标题）',
-        description: e.content,
+        description: e.persona ?? e.content ?? '',
+        memory: (e.memory ?? '').trim(),
         active: active.includes((e.title ?? '').trim()),
       }))
       .sort((a, b) => {
@@ -391,6 +414,7 @@ const characterList = computed(() => {
   return (save.value?.characters ?? []).map((c) => ({
     name: c.name,
     description: c.introduction,
+    memory: '',
     active: false,
   }))
 })
@@ -567,13 +591,19 @@ const characterList = computed(() => {
             </div>
             <template v-if="editingLore && editingLore.type === 'character' && editingLore.title === c.name">
               <input v-model="loreEditName" class="status-edit-input" placeholder="名称" />
-              <textarea v-model="loreEditDesc" class="status-edit-textarea" rows="4" placeholder="描述" />
+              <label class="edit-sub-label">设定（身份/性格/关系基础）</label>
+              <textarea v-model="loreEditPersona" class="status-edit-textarea" rows="4" placeholder="这个人物是谁" />
+              <label class="edit-sub-label">记忆（经历/承诺/状态）</label>
+              <textarea v-model="loreEditMemory" class="status-edit-textarea" rows="4" placeholder="这个人物记得什么（每条以时间开头）" />
               <div class="edit-actions">
                 <button class="status-edit-btn save" @click="saveEditLore">完成</button>
                 <button class="status-edit-btn cancel" @click="cancelEditLore">取消</button>
               </div>
             </template>
-            <p v-else class="card-desc">{{ c.description }}</p>
+            <template v-else>
+              <p class="card-desc">{{ c.description }}</p>
+              <p v-if="c.memory" class="card-memory">记忆：{{ c.memory.split('\n').filter(Boolean).slice(-2).join(' / ') }}</p>
+            </template>
           </div>
         </div>
 
@@ -616,7 +646,13 @@ const characterList = computed(() => {
             <div v-for="entry in displayedLoreOverview" :key="entry.id" class="lore-overview-row" @dblclick="startEditLore('lore', entry.title)">
               <template v-if="editingLore && editingLore.type === 'lore' && editingLore.title === entry.title">
                 <input v-model="loreEditName" class="status-edit-input" placeholder="标题" />
-                <textarea v-model="loreEditDesc" class="status-edit-textarea" rows="4" placeholder="内容" />
+                <template v-if="entry.isCharacter">
+                  <label class="edit-sub-label">设定（身份/性格/关系基础）</label>
+                  <textarea v-model="loreEditPersona" class="status-edit-textarea" rows="4" placeholder="这个人物是谁" />
+                  <label class="edit-sub-label">记忆（经历/承诺/状态）</label>
+                  <textarea v-model="loreEditMemory" class="status-edit-textarea" rows="4" placeholder="这个人物记得什么" />
+                </template>
+                <textarea v-else v-model="loreEditDesc" class="status-edit-textarea" rows="4" placeholder="内容" />
                 <div class="edit-actions">
                   <button class="status-edit-btn save" @click="saveEditLore">完成</button>
                   <button class="status-edit-btn cancel" @click="cancelEditLore">取消</button>
@@ -871,6 +907,12 @@ const characterList = computed(() => {
   color: var(--muted);
   cursor: pointer;
 }
+.edit-sub-label {
+  display: block;
+  margin: 8px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
 .edit-toggle-row input,
 .detail-row input {
   appearance: none;
@@ -1089,6 +1131,14 @@ const characterList = computed(() => {
   color: #ccc;
   font-size: 14px;
   line-height: 1.6;
+}
+.card-memory {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  border-left: 2px solid rgba(255, 255, 255, 0.12);
+  padding-left: 8px;
 }
 .card-people {
   color: var(--muted);

@@ -4,22 +4,39 @@ import { removeDlcAudio } from '@/dlc'
 import { clearBgmCache, stopBgm, isBgmFromDlc } from '@/audio/bgm'
 import type { World, PanelField, LoreEntry, PresetCharacter } from '@/types'
 import { createId } from '@/types'
+import { migrateLorebook, migrateLoreEntry } from '@/utils/lore'
 
 export function normalizeImportedLorebook(raw: unknown[]): LoreEntry[] {
   const result: LoreEntry[] = []
   for (const item of raw) {
     const e = (item ?? {}) as Record<string, unknown>
     const content = typeof e.content === 'string' && e.content.trim() ? e.content.trim() : ''
-    if (!content) continue
+    const persona = typeof e.persona === 'string' && e.persona.trim() ? e.persona.trim() : ''
+    const memory = typeof e.memory === 'string' && e.memory.trim() ? e.memory.trim() : ''
+    if (!content && !persona && !memory) continue
     const tags = Array.isArray(e.tags)
       ? e.tags.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t)
       : []
     const title = typeof e.title === 'string' && e.title.trim() ? e.title.trim() : undefined
     const aliases = Array.isArray(e.aliases) ? e.aliases.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t) : []
-    result.push({ id: createId(), title, aliases: aliases.length > 0 ? aliases : undefined, tags, content, required: !!e.required, fixed: e.fixed === true ? true : undefined, links: Array.isArray(e.links) ? e.links.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t) : undefined, hidden: e.hidden === true ? true : undefined, isLocation: e.isLocation === true ? true : undefined, isCharacter: e.isCharacter === true ? true : undefined, lastVisitedTime: typeof e.lastVisitedTime === 'string' && e.lastVisitedTime.trim() ? e.lastVisitedTime.trim() : undefined })
+    const entry: LoreEntry = {
+      id: createId(), title, aliases: aliases.length > 0 ? aliases : undefined, tags, content,
+      persona: persona || undefined, memory: memory || undefined,
+      required: !!e.required, fixed: e.fixed === true ? true : undefined,
+      links: Array.isArray(e.links) ? e.links.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter((t) => !!t) : undefined,
+      hidden: e.hidden === true ? true : undefined,
+      isLocation: e.isLocation === true ? true : undefined,
+      isCharacter: e.isCharacter === true ? true : undefined,
+      lastVisitedTime: typeof e.lastVisitedTime === 'string' && e.lastVisitedTime.trim() ? e.lastVisitedTime.trim() : undefined,
+    }
+    result.push(migrateLoreEntry(entry))
   }
   return result
 }
+
+// 旧档迁移：人物条目若只有 content（设定+记忆混合），整体迁入 persona，content 保留作只读备份。
+// 幂等：已有 persona 的条目直接返回原对象（引用不变，便于判断是否发生迁移）。
+// （实现见 @/utils/lore）
 
 // 解析并归一化「导出世界」JSON，返回可用的世界数据（含源 id）。
 // 允许面板字段为空数组（对应「创建空世界」导出的世界），仅当 panelSchema 存在但非数组时报错。
@@ -77,17 +94,27 @@ export const useWorldStore = defineStore('world', {
   actions: {
     async load() {
       try {
-        this.worlds = await listWorlds()
-        // 旧版本创建的世界没有原始快照：用当前值补一份，保证"重新开始冒险/复制世界"可用
-        for (const w of this.worlds) {
-          if (!w.original) {
-            w.original = {
-              worldSetting: w.worldSetting,
-              lorebook: w.lorebook ? JSON.parse(JSON.stringify(w.lorebook)) as LoreEntry[] : [],
-              panelSchema: JSON.parse(JSON.stringify(w.panelSchema)) as PanelField[],
+        const worlds = await listWorlds()
+        const dirty: World[] = []
+        // 旧世界迁移：人物条目 content → persona（幂等）
+        this.worlds = worlds.map((w) => {
+          const lb = migrateLorebook(w.lorebook)
+          const next = lb === w.lorebook ? w : { ...w, lorebook: lb }
+          if (!next.original) {
+            // 旧版本创建的世界没有原始快照：用当前值补一份，保证"重新开始冒险/复制世界"可用
+            next.original = {
+              worldSetting: next.worldSetting,
+              lorebook: next.lorebook ? (JSON.parse(JSON.stringify(next.lorebook)) as LoreEntry[]) : [],
+              panelSchema: JSON.parse(JSON.stringify(next.panelSchema)) as PanelField[],
             }
-            await putWorld(w)
+            dirty.push(next)
+          } else if (next !== w) {
+            dirty.push(next)
           }
+          return next
+        })
+        for (const w of dirty) {
+          await putWorld(w)
         }
         // 默认选中最近更新的世界
         if (!this.currentWorldId && this.worlds.length > 0) {
@@ -103,8 +130,11 @@ export const useWorldStore = defineStore('world', {
     worldSetting: string,
     panelSchema: PanelField[],
     lorebook: LoreEntry[] = [],
+    multiAgent = false,
   ): Promise<World> {
     const now = Date.now()
+    // 人物条目统一迁移为 persona/memory 双字段（幂等）
+    lorebook = migrateLorebook(lorebook) ?? []
     const world: World = {
       id: createId(),
       name,
@@ -119,6 +149,7 @@ export const useWorldStore = defineStore('world', {
         panelSchema: JSON.parse(JSON.stringify(panelSchema)) as PanelField[],
       },
       baseLoreTitles: (lorebook ?? []).map((e) => (e.title ?? '').trim()).filter((t) => !!t),
+      ...(multiAgent ? { multiAgent: true } : {}),
     }
     await putWorld(world)
     this.worlds.unshift(world)

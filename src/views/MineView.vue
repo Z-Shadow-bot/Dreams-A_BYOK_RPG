@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watchEffect } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { getLogText, clearLog } from '@/utils/logger'
 import { Capacitor } from '@capacitor/core'
@@ -47,6 +47,40 @@ const genSettingsOpen = ref(false)
 const contextSettingsOpen = ref(false)
 const displaySettingsOpen = ref(false)
 const changelogOpen = ref(false)
+// ===== 多智能体模式设置 =====
+const maSettingsOpen = ref(false)
+const maForm = reactive({
+  autoAdvance: 1,
+  heartbeat: 3,
+  personaThreshold: 3000,
+  memoryThreshold: 1200,
+})
+watchEffect(() => {
+  maForm.autoAdvance = settings.maAutoAdvance
+  maForm.heartbeat = settings.maNarratorHeartbeat
+  maForm.personaThreshold = settings.maPersonaThreshold
+  maForm.memoryThreshold = settings.maMemoryThreshold
+})
+function onMaAutoAdvanceInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n)) void settings.setMaAutoAdvance(n)
+}
+function onMaHeartbeatInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n)) void settings.setMaNarratorHeartbeat(n)
+}
+function onMaPersonaThresholdInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n) && n >= 0) void settings.setMaPersonaThreshold(n)
+}
+function onMaDispatchModeChange(e: Event) {
+  const v = (e.target as HTMLSelectElement).value
+  if (v === 'director' || v === 'hybrid' || v === 'solo') void settings.setMaDispatchMode(v)
+}
+function onMaMemoryThresholdInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n) && n >= 0) void settings.setMaMemoryThreshold(n)
+}
 
 interface ModelPreset {
   provider: string
@@ -698,6 +732,94 @@ async function doClearLog() {
           <button class="color-preset-btn" @click="settings.setTextColor('#d4c5a0'); settings.setBgColor('#2d2317')">羊皮纸</button>
           <button class="color-preset-btn" @click="settings.setTextColor('#a0d8a0'); settings.setBgColor('#0d1f0d')">墨绿</button>
           <button class="color-preset-btn" @click="settings.setTextColor('#f0f0f0'); settings.setBgColor('#1a0a1a')">暗紫</button>
+        </div>
+      </template>
+    </section>
+
+    <!-- 多智能体模式设置（可折叠） -->
+    <section class="block">
+      <button class="section-toggle" @click="maSettingsOpen = !maSettingsOpen">
+        <span>多智能体模式</span>
+        <span class="toggle-arrow">{{ maSettingsOpen ? '▾' : '▸' }}</span>
+      </button>
+      <template v-if="maSettingsOpen">
+        <p class="setting-hint">仅对开启「多智能体模式」的世界生效，其余世界不受影响。</p>
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">调度方式</label>
+            <select class="input" :value="settings.maDispatchMode" @change="onMaDispatchModeChange">
+              <option value="director">每拍都由导演决定（推荐）</option>
+              <option value="hybrid">本地规则优先（省 token）</option>
+              <option value="solo">一对一快速（仅 1 名 NPC 时生效）</option>
+            </select>
+          </div>
+          <p class="setting-hint">
+            导演方式：每拍调用一次调度模型，由它决定谁开口、谁在场，复杂场景与战斗更可靠（每拍多 1 次请求）。
+            本地优先：规则能明确判断时跳过导演，相似时仍会调用，更省 token。
+            一对一：只有 1 名 NPC 时固定 NPC↔你 轮转，不调导演与路人。
+          </p>
+        </div>
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">自动推进拍数</label>
+            <input
+              v-model.number="maForm.autoAdvance"
+              class="input"
+              type="number"
+              min="1"
+              max="10"
+              step="1"
+              @change="onMaAutoAdvanceInput"
+            />
+          </div>
+          <p class="setting-hint">
+            每轮自动推进的拍数，1 表示每次都由你手动发送。轮到你的角色发言时会立即暂停并重新计数（1–10）。
+          </p>
+        </div>
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">旁白心跳间隔</label>
+            <input
+              v-model.number="maForm.heartbeat"
+              class="input"
+              type="number"
+              min="1"
+              max="10"
+              step="1"
+              @change="onMaHeartbeatInput"
+            />
+          </div>
+          <p class="setting-hint">
+            连续多少拍未调用旁白就强制调用一次，避免场景与伏笔过时（1–10，越小越新鲜也越费 token）。
+          </p>
+        </div>
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">角色设定压缩阈值</label>
+            <input
+              v-model.number="maForm.personaThreshold"
+              class="input"
+              type="number"
+              min="0"
+              step="100"
+              @change="onMaPersonaThresholdInput"
+            />
+          </div>
+          <p class="setting-hint">智能体「设定」超过该字数才压缩，只去冗余、不删事实（0 = 关闭，默认 3000）</p>
+        </div>
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">角色记忆压缩阈值</label>
+            <input
+              v-model.number="maForm.memoryThreshold"
+              class="input"
+              type="number"
+              min="0"
+              step="100"
+              @change="onMaMemoryThresholdInput"
+            />
+          </div>
+          <p class="setting-hint">智能体「记忆」超过该字数时压缩，保留近期原文、更早内容转摘要（0 = 关闭，默认 1200）</p>
         </div>
       </template>
     </section>

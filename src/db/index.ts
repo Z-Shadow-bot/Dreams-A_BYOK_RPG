@@ -1,7 +1,7 @@
-import type { World, WorldState, StoryPage, SavePoint } from '@/types'
+import type { World, WorldState, StoryPage, SavePoint, MaState, AgentState, StoryMessage } from '@/types'
 
 const DB_NAME = 'dreams'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 const STORES = {
   worlds: 'worlds',
@@ -9,6 +9,9 @@ const STORES = {
   pages: 'pages',
   savepoints: 'savepoints',
   settings: 'settings',
+  maStates: 'maStates',
+  agents: 'agents',
+  messages: 'messages',
 } as const
 
 let dbPromise: Promise<IDBDatabase> | null = null
@@ -36,6 +39,19 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORES.settings)) {
         db.createObjectStore(STORES.settings, { keyPath: 'key' })
+      }
+      // ===== v2：多智能体模式 =====
+      if (!db.objectStoreNames.contains(STORES.maStates)) {
+        db.createObjectStore(STORES.maStates, { keyPath: 'worldId' })
+      }
+      if (!db.objectStoreNames.contains(STORES.agents)) {
+        const agents = db.createObjectStore(STORES.agents, { keyPath: ['worldId', 'charId'] })
+        agents.createIndex('worldId', 'worldId', { unique: false })
+      }
+      if (!db.objectStoreNames.contains(STORES.messages)) {
+        const msgs = db.createObjectStore(STORES.messages, { keyPath: 'id' })
+        msgs.createIndex('worldId', 'worldId', { unique: false })
+        msgs.createIndex('worldId_seq', ['worldId', 'seq'], { unique: false })
       }
     }
     req.onsuccess = () => resolve(req.result)
@@ -108,17 +124,36 @@ export async function deleteWorld(id: string): Promise<void> {
   const spKeys = await withStore<IDBValidKey[]>(STORES.savepoints, 'readonly', (s) =>
     req(s.index('worldId').getAllKeys(id)),
   )
+  const agentKeys = await withStore<IDBValidKey[]>(STORES.agents, 'readonly', (s) =>
+    req(s.index('worldId').getAllKeys(id)),
+  )
+  const msgKeys = await withStore<IDBValidKey[]>(STORES.messages, 'readonly', (s) =>
+    req(s.index('worldId').getAllKeys(id)),
+  )
   const db = await openDB()
   const tx = db.transaction(
-    [STORES.worlds, STORES.states, STORES.pages, STORES.savepoints],
+    [
+      STORES.worlds,
+      STORES.states,
+      STORES.pages,
+      STORES.savepoints,
+      STORES.maStates,
+      STORES.agents,
+      STORES.messages,
+    ],
     'readwrite',
   )
   tx.objectStore(STORES.worlds).delete(id)
   tx.objectStore(STORES.states).delete(id)
+  tx.objectStore(STORES.maStates).delete(id)
   const pageStore = tx.objectStore(STORES.pages)
   for (const k of pageKeys) pageStore.delete(k)
   const spStore = tx.objectStore(STORES.savepoints)
   for (const k of spKeys) spStore.delete(k)
+  const agentStore = tx.objectStore(STORES.agents)
+  for (const k of agentKeys) agentStore.delete(k)
+  const msgStore = tx.objectStore(STORES.messages)
+  for (const k of msgKeys) msgStore.delete(k)
   await new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve(undefined)
     tx.onerror = () => reject(tx.error)
@@ -208,4 +243,83 @@ export async function getSetting<T>(key: string): Promise<T | undefined> {
 
 export async function putSetting<T>(key: string, value: T): Promise<void> {
   await withStore(STORES.settings, 'readwrite', (s) => req(s.put(deepClone({ key, value }))))
+}
+
+// ===== 多智能体：运行状态 =====
+export async function getMaState(worldId: string): Promise<MaState | undefined> {
+  return withStore<MaState | undefined>(STORES.maStates, 'readonly', (s) => req(s.get(worldId)))
+}
+
+export async function putMaState(state: MaState): Promise<void> {
+  await withStore(STORES.maStates, 'readwrite', (s) => req(s.put(deepClone(state))))
+}
+
+export async function deleteMaState(worldId: string): Promise<void> {
+  await withStore(STORES.maStates, 'readwrite', (s) => req(s.delete(worldId)))
+}
+
+// ===== 多智能体：角色状态 =====
+export async function listAgents(worldId: string): Promise<AgentState[]> {
+  const arr = await getAllByIndex<AgentState>(STORES.agents, 'worldId', worldId)
+  return arr.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export async function getAgent(worldId: string, charId: string): Promise<AgentState | undefined> {
+  return withStore<AgentState | undefined>(STORES.agents, 'readonly', (s) => req(s.get([worldId, charId])))
+}
+
+export async function putAgent(agent: AgentState): Promise<void> {
+  await withStore(STORES.agents, 'readwrite', (s) => req(s.put(deepClone(agent))))
+}
+
+export async function deleteAgent(worldId: string, charId: string): Promise<void> {
+  await withStore(STORES.agents, 'readwrite', (s) => req(s.delete([worldId, charId])))
+}
+
+// ===== 多智能体：消息流 =====
+// 按序号升序读取；fromSeq 用于增量拉取（只取上次之后的新消息）
+export async function listMessages(worldId: string, fromSeq = 0): Promise<StoryMessage[]> {
+  const arr = await withStore<StoryMessage[]>(STORES.messages, 'readonly', (s) => {
+    const idx = s.index('worldId_seq')
+    const range = IDBKeyRange.bound([worldId, fromSeq], [worldId, Number.MAX_SAFE_INTEGER])
+    return req(idx.getAll(range))
+  })
+  return arr.sort((a, b) => a.seq - b.seq)
+}
+
+export async function countMessages(worldId: string): Promise<number> {
+  const arr = await withStore<number>(STORES.messages, 'readonly', (s) => req(s.index('worldId').count(worldId)))
+  return arr
+}
+
+export async function putMessage(msg: StoryMessage): Promise<void> {
+  await withStore(STORES.messages, 'readwrite', (s) => req(s.put(deepClone(msg))))
+}
+
+export async function putMessages(msgs: StoryMessage[]): Promise<void> {
+  if (msgs.length === 0) return
+  await withStore(STORES.messages, 'readwrite', (s) => {
+    for (const m of msgs) s.put(deepClone(m))
+  })
+}
+
+// 删除序号大于 fromSeq 的消息（回退/重试用）
+export async function deleteMessagesFrom(worldId: string, fromSeq: number): Promise<void> {
+  const all = await listMessages(worldId)
+  const toDelete = all.filter((m) => m.seq > fromSeq)
+  if (toDelete.length === 0) return
+  await withStore(STORES.messages, 'readwrite', (s) => {
+    for (const m of toDelete) s.delete(m.id)
+  })
+}
+
+// 用快照替换某世界的全部消息（读档/导入用）
+export async function replaceMessages(worldId: string, msgs: StoryMessage[]): Promise<void> {
+  const keys = await withStore<IDBValidKey[]>(STORES.messages, 'readonly', (s) =>
+    req(s.index('worldId').getAllKeys(worldId)),
+  )
+  await withStore(STORES.messages, 'readwrite', (s) => {
+    for (const k of keys) s.delete(k)
+    for (const m of msgs) s.put(deepClone(m))
+  })
 }

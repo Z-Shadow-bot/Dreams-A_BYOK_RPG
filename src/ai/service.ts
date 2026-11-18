@@ -20,6 +20,7 @@ import type {
   AIResponse,
   CharacterEntry,
   Item,
+  LoreAccess,
   LoreEntry,
   MapLocation,
   PanelField,
@@ -214,9 +215,20 @@ function asTriBool(v: unknown): boolean | undefined {
   return undefined
 }
 
+// 归一化"待删除行"列表：过滤空值与非法项，全空返回 undefined
+function normalizeLineList(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out = v
+    .filter((x): x is string => typeof x === 'string')
+    .map((x) => x.trim())
+    .filter((x) => !!x)
+  return out.length > 0 ? out : undefined
+}
+
 // 归一化单条世界书条目（AI 返回无 id，由这里分配）
 // remove 标记：仅当条目完全重复或记录错误时 AI 返回 { title, remove: true } 表示删除该条目（无需 content）
 // 内容级增量：支持 appendContent / appendTo / removeLines（无 content 时为纯增量更新）
+// 人物双字段：支持 persona / memory 全量替换，或 personaAppend / memoryAppend 等增量
 function normalizeLoreEntry(v: unknown): LoreEntry | null {
   const e = (v ?? {}) as Record<string, unknown>
   const title = asString(e.title).trim()
@@ -227,16 +239,37 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
   const content = asString(e.content).trim()
   const appendContent = asString(e.appendContent).trim()
   const appendTo = asString(e.appendTo).trim() || undefined
-  const removeLines = Array.isArray(e.removeLines)
-    ? e.removeLines
-        .filter((x): x is string => typeof x === 'string')
-        .map((x) => x.trim())
-        .filter((x) => !!x)
-    : undefined
-  const hasDelta = !!appendContent || (removeLines ? removeLines.length > 0 : false)
+  const removeLines = normalizeLineList(e.removeLines)
+  // 人物条目双字段（全量或增量）
+  const persona = asString(e.persona).trim()
+  const memory = asString(e.memory).trim()
+  const personaAppend = asString(e.personaAppend).trim()
+  const memoryAppend = asString(e.memoryAppend).trim()
+  const personaRemoveLines = normalizeLineList(e.personaRemoveLines)
+  const memoryRemoveLines = normalizeLineList(e.memoryRemoveLines)
+  // 多智能体可见性（仅多智能体模式生效；普通模式忽略）
+  const accessRaw = e.access as Record<string, unknown> | undefined
+  const mode = accessRaw && typeof accessRaw === 'object' ? accessRaw.mode : undefined
+  const access: LoreAccess | undefined =
+    mode === 'public' || mode === 'secret' || mode === 'knownBy'
+      ? {
+          mode,
+          who: Array.isArray(accessRaw?.who)
+            ? (accessRaw!.who as unknown[]).filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
+            : undefined,
+        }
+      : undefined
+  const revealTo = normalizeLineList(e.revealTo)
+  const hasDelta =
+    !!appendContent ||
+    !!personaAppend ||
+    !!memoryAppend ||
+    (removeLines ? removeLines.length > 0 : false) ||
+    (personaRemoveLines ? personaRemoveLines.length > 0 : false) ||
+    (memoryRemoveLines ? memoryRemoveLines.length > 0 : false)
   // 纯内容增量更新：允许无 content，但必须有 title（用于匹配已有条目）；新增条目则必须有 content
-  if (!content && !hasDelta) return null
-  if (!content && !title) return null
+  if (!content && !persona && !memory && !hasDelta && !access && !revealTo) return null
+  if (!content && !persona && !memory && !title) return null
   const tags = asStringArray(e.tags).map((t) => t.trim()).filter((t) => !!t)
   const aliases = asStringArray(e.aliases).map((t) => t.trim()).filter((t) => !!t)
   return {
@@ -245,6 +278,10 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
     aliases: aliases.length > 0 ? aliases : undefined,
     tags,
     content,
+    persona: persona || undefined,
+    memory: memory || undefined,
+    access,
+    revealTo: revealTo || undefined,
     required: asTriBool(e.required),
     fixed: asTriBool(e.fixed),
     links: Array.isArray(e.links)
@@ -256,63 +293,16 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
     lastVisitedTime: asString(e.lastVisitedTime).trim() || undefined,
     appendContent: appendContent || undefined,
     appendTo,
-    removeLines: removeLines && removeLines.length > 0 ? removeLines : undefined,
+    removeLines,
+    personaAppend: personaAppend || undefined,
+    personaRemoveLines,
+    memoryAppend: memoryAppend || undefined,
+    memoryRemoveLines,
   }
 }
 
-// 世界书条目内容级 diff：在旧 content 基础上应用增量（全量替换 / 删除行 / 追加到栏目或末尾）
-export function applyLoreContentDelta(oldContent: string, u: LoreEntry): string {
-  // 1) 完整替换优先
-  const full = typeof u.content === 'string' ? u.content.trim() : ''
-  if (full) return full
-  let content = oldContent ?? ''
-  // 2) 删除包含指定子串的行
-  const removeLines = Array.isArray(u.removeLines) ? u.removeLines.filter((s) => typeof s === 'string' && s.trim()) : []
-  if (removeLines.length > 0) {
-    content = content
-      .split('\n')
-      .filter((line) => !removeLines.some((m) => line.includes(m.trim())))
-      .join('\n')
-  }
-  // 3) 追加（可指定栏目：插入到该【栏目】区段末尾）
-  const append = typeof u.appendContent === 'string' ? u.appendContent.trim() : ''
-  if (append) {
-    const section = typeof u.appendTo === 'string' ? u.appendTo.trim() : ''
-    content = section ? insertIntoSection(content, section, append) : content ? `${content}\n${append}` : append
-  }
-  return content
-}
-
-// 判断某一行是否是栏目标题（【xxx】 或 # / ## 开头）
-function isSectionHeading(line: string): boolean {
-  const t = line.trim()
-  if (!t) return false
-  return (t.startsWith('【') && t.includes('】')) || t.startsWith('#')
-}
-
-// 把 text 插入到标题含 section 的区段末尾（下一个栏目标题之前）；找不到栏目则追加到末尾
-function insertIntoSection(content: string, section: string, text: string): string {
-  const lines = content.split('\n')
-  let head = -1
-  for (let i = 0; i < lines.length; i++) {
-    if (isSectionHeading(lines[i]) && lines[i].includes(section)) {
-      head = i
-      break
-    }
-  }
-  if (head === -1) return content ? `${content}\n${text}` : text
-  let end = lines.length
-  for (let i = head + 1; i < lines.length; i++) {
-    if (isSectionHeading(lines[i])) {
-      end = i
-      break
-    }
-  }
-  // 去掉该区段末尾的空行后再插入
-  let insertAt = end
-  while (insertAt - 1 > head && !lines[insertAt - 1].trim()) insertAt--
-  return [...lines.slice(0, insertAt), text, ...lines.slice(insertAt)].join('\n')
-}
+// 内容级增量逻辑已抽到 utils/lore（世界书合并与多智能体共用），此处保留导出以兼容既有引用
+export { applyLoreContentDelta, applyLoreFieldDelta } from '@/utils/lore'
 
 // 归一化世界书数组：过滤非法/空内容条目
 export function normalizeLorebook(raw: unknown): LoreEntry[] {

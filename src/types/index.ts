@@ -49,6 +49,85 @@ export interface OverviewData {
   latestProgress: string // 第四栏：角色最新进展
 }
 
+// ===== 多智能体模式（仅 World.multiAgent === true 使用）=====
+
+// 旁白的伏笔/秘密：只有旁白与旁白上下文可见；必须显式处置（fired / expired），不允许静默消失
+export interface Secret {
+  id: string
+  text: string // 伏笔内容
+  trigger?: string // 触发条件（自然语言，给旁白参考）
+  expiresAtDay?: number // 世界日超过该值时由本地标记过期，等待旁白处置
+  status: 'pending' | 'fired' | 'expired'
+}
+
+// 战斗状态：由旁白在开场建立回合序，之后按序轮转，导演判定结束
+export interface MaCombat {
+  active: boolean
+  round: number
+  order: string[] // charId 序列
+  index: number // 当前轮到的位置
+}
+
+// 多智能体运行状态（每个世界一条）
+export interface MaState {
+  worldId: string
+  clockDay: number // 世界日（从 1 开始）
+  clockMinute: number // 当天分钟数 0-1439
+  beat: number // 已推进拍数
+  narratorIdle: number // 距上次旁白调用过了几拍
+  lastSpeakerId: string | null // 上一次发言者（禁止连续同人）
+  presence: string[] // 在场 charId（导演每拍可修正）
+  sceneState: string // 旁白权威层：当前世界事实
+  sceneAsOfSeq: number // sceneState 对应的最后一条消息序号
+  sceneValue?: string // world.sceneField 对应的值（由视图层同步，用于世界书精确匹配）
+  eventType?: string // 对话 | 对峙 | 战斗 | 探索 | 过场（导演/旁白维护）
+  combat?: MaCombat // 战斗状态（可选）
+  secrets: Secret[]
+  digestSeq: number // 已生成剧情摘要的截至序号
+  storySummary: string // 滚动剧情摘要
+  autoAdvanceLeft: number // 剩余自动推进拍数
+  autoAdvance?: number // 本世界的自动推进拍数设置（缺省用全局默认）
+  heartbeatInterval?: number // 本世界的旁白心跳间隔设置（缺省用全局默认）
+  pendingSavePatch?: Record<string, unknown> | null // 旁白产生的存档变更，由视图层应用后清空
+  createdAt: number
+  updatedAt: number
+}
+
+// 单个智能体的私有状态（旁白与玩家角色也用同结构，charId 为保留值）
+export interface AgentState {
+  worldId: string
+  charId: string // 对应 isCharacter 条目 id；NARRATOR_ID / PLAYER_ID 为保留值
+  name: string
+  isPlayer?: boolean
+  isNarrator?: boolean
+  privatePersona: string // 私密设定（仅本人上下文可见）
+  memory: string // 近期记忆原文（每条带时间前缀）
+  memorySummary?: string // 更早记忆的压缩摘要
+  stance?: string // 此刻状态（一句话：在做什么/在意什么），发言时由本人更新
+  rev: number // 单调递增，异步写回校验用
+  lastSeenDay?: number // 上次在场/被调用的世界日（离线推演用）
+  present?: boolean
+  updatedAt: number
+}
+
+// 消息流（多智能体模式下取代 StoryPage 作为剧情载体）
+export interface StoryMessage {
+  id: string
+  worldId: string
+  seq: number // 从 0 递增
+  speakerId: string // charId | NARRATOR_ID | CROWD_ID | PLAYER_ID
+  speakerName: string
+  text: string
+  knows: string[] // 可见的 charId 集合（旁白恒知）
+  appliedTo: string[] // 已吸收进记忆的 charId 集合
+  createdAt: number
+  meta?: { day: number; minute: number }
+}
+
+export const NARRATOR_ID = '__narrator__'
+export const PLAYER_ID = '__player__'
+export const CROWD_ID = '__crowd__'
+
 // ===== 存档（全量 JSON，每轮由 AI 重写） =====
 export interface SaveData {
   panel: Record<string, string | number> // 角色面板（按 panelSchema 填充）
@@ -65,13 +144,27 @@ export interface SaveData {
   worldTime?: string // 世界时钟（自然语言，如"启程后第12天·深秋·入夜前"，AI 每轮维护，避免时间线错乱）
 }
 
+// ===== 世界书条目的可见性（多智能体模式）=====
+// 缺省 = public：所有角色都能注入；secret：仅旁白；knownBy：仅列出的角色 + 旁白
+export interface LoreAccess {
+  mode: 'public' | 'secret' | 'knownBy'
+  who?: string[] // charId 列表（mode === 'knownBy' 时有效）
+}
+
 // ===== 世界书条目（详细设定，按标签按需注入） =====
 export interface LoreEntry {
   id: string
   title?: string // 条目标题，便于检索定位
   aliases?: string[] // 别名/曾用称呼（如改名前的旧称呼）：用于识别同一实体并参与检索匹配，避免同义不同名生成重复条目
   tags: string[] // 标签（场景/地点/人物/主题等），用于按需命中
-  content: string // 条目正文（详细设定）
+  content: string // 条目正文（详细设定）；人物条目迁移后保留为旧版只读备份，不参与注入
+  // ===== 人物条目专用双字段（仅 isCharacter 使用）=====
+  persona?: string // 设定：身份/性格/关系基础/能力等相对稳定的部分（公开）
+  memory?: string // 记忆：经历/承诺/状态变化等随剧情演进的部分
+  migrated?: boolean // 已把旧 content 迁入 persona（content 保留作只读备份）
+  // ===== 多智能体可见性（缺省 public；普通模式不生效）=====
+  access?: LoreAccess
+  revealTo?: string[] // 仅 loreUpdates 输出：把该条目的可见性揭示给这些 charId（不持久化）
   required?: boolean // 必需：每轮必需（AI 创建时标注，通常 2-5 条）
   fixed?: boolean // 固定：AI 不得通过 loreUpdates 修改此条目（用于不会改变的底层设定）
   links?: string[] // 关联条目标题列表：当本条目被注入时，这些标题对应的条目也会一并注入（仅展开一层）
@@ -84,6 +177,11 @@ export interface LoreEntry {
   appendContent?: string // 追加到条目内容（未提供 content 时生效；可配合 appendTo 指定栏目）
   appendTo?: string // 追加目标栏目（如「关键记忆」）；命中对应【栏目】标题时插入该区段末尾，否则追加到条目末尾
   removeLines?: string[] // 删除条目内容中包含这些子串的行（逐行匹配）
+  // ===== 人物条目双字段增量（仅用于 loreUpdates 输出，不持久化）=====
+  personaAppend?: string // 追加到 persona 末尾
+  personaRemoveLines?: string[] // 从 persona 删除包含这些子串的行
+  memoryAppend?: string // 追加到 memory 末尾（多条用换行分隔）
+  memoryRemoveLines?: string[] // 从 memory 删除包含这些子串的行
 }
 
 // ===== 世界原始快照（创建世界时保存：供"重新开始冒险"重置设定、"复制世界"生成副本使用） =====
@@ -113,6 +211,7 @@ export interface World {
   dlcLoreTitles?: string[] // DLC 初始世界书条目的 title 列表（更新 DLC 时用于区分初始条目与玩家添加条目）
   sourceId?: string // 导入世界的源 id（用于后续导入同一源世界时识别为「更新」而非「新建」）
   baseLoreTitles?: string[] // 分享/导入世界的基线条目 title 列表（导入更新时区分基线条目与玩家新增条目，作用同 dlcLoreTitles）
+  multiAgent?: boolean // 多智能体模式：创建世界时二选一，创建后不可更改
 }
 
 // ===== 预设角色（DLC 提供的可选起始角色） =====
@@ -163,9 +262,22 @@ export interface WorldState {
     currentIndex: number
     lorebook: LoreEntry[] | null
   } | null
+  // 多智能体：本轮回退快照（每次提交前整体覆盖，重试时整体退回）
+  pendingMaTurn?: MaTurnSnapshot | null
   npcSurpriseCounter?: number // 距下一次"久未见 NPC 随机引入"还剩的回合数（1-10 随机重置）
   createdAt: number
   updatedAt: number
+}
+
+// 多智能体一轮的完整快照（一次提交可能推进多拍）
+export interface MaTurnSnapshot {
+  beforeSeq: number // 本轮之前的最大消息序号（-1 表示空）
+  input?: string // 玩家本轮输入（重试时填回输入框，可修改）
+  ma: MaState // 时钟/场景/伏笔/beat/战斗全量
+  agents: AgentState[] // 全部角色状态（含 rev，回退后异步写回自动失效）
+  lorebook?: LoreEntry[] // 世界书快照（旁白可能修改）
+  save?: SaveData // 存档快照（旁白 patchSave 可能修改）
+  createdAt: number
 }
 
 // ===== 存档点 =====
@@ -179,6 +291,10 @@ export interface SavePoint {
   lorebook?: LoreEntry[] // 存档时的世界书快照（读档时恢复，避免时间线不一致）
   worldSetting?: string // 存档时的核心设定快照
   panelSchema?: PanelField[] // 存档时的面板字段快照
+  // ===== 多智能体模式快照（仅 World.multiAgent 时存在）=====
+  maState?: MaState
+  agents?: AgentState[]
+  messages?: StoryMessage[]
   createdAt: number
 }
 

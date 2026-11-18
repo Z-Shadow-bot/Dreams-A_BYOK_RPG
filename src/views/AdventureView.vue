@@ -9,6 +9,8 @@ import { computed, ref, watch, onMounted, onBeforeUnmount, onUnmounted, nextTick
 import { useAdventureStore } from '@/stores/adventure'
 import { useWorldStore } from '@/stores/world'
 import { useSettingsStore } from '@/stores/settings'
+import { useMaStore, clockText } from '@/stores/multiagent'
+import { PLAYER_ID, NARRATOR_ID } from '@/types'
 import { playSceneBgm, playBgmByName, stopBgm, setBgmMuted } from '@/audio/bgm'
 
 const adventure = useAdventureStore()
@@ -26,6 +28,93 @@ const enhanceSummarize = ref(true) // 总结优化已有设定
 const enhanceExpand = ref(true) // 补充更多合理设定
 
 const adventureSettingsOpen = ref(false) // 冒险设置折叠栏
+// ===== 多智能体（仅 World.multiAgent === true 时生效）=====
+const ma = useMaStore()
+const isMultiAgent = computed(() => worldStore.currentWorld?.multiAgent === true)
+const maAutoAdvance = computed(() => ma.ma?.autoAdvance ?? settings.maAutoAdvance)
+const maHeartbeat = computed(() => ma.ma?.heartbeatInterval ?? settings.maNarratorHeartbeat)
+// 多智能体模式用消息流判断"是否已开始"，普通模式用页历史
+const hasAnyAdventure = computed(() => (isMultiAgent.value ? ma.messages.length > 0 : adventure.hasAdventure))
+const maClock = computed(() => (ma.ma ? clockText(ma.ma.clockDay, ma.ma.clockMinute) : ''))
+// 世界加载完成 / 切换世界后，加载多智能体状态（onMounted 时 world 可能尚未就绪）
+watch(
+  () => [worldStore.currentWorldId, worldStore.currentWorld?.multiAgent === true] as const,
+  async ([id, isMa]) => {
+    if (id && isMa) {
+      await ma.open(id)
+      syncSceneValue()
+    }
+  },
+  { immediate: true },
+)
+const maStream = ref<HTMLElement | null>(null)
+watch(
+  () => ma.messages.length,
+  async () => {
+    if (!isMultiAgent.value) return
+    await nextTick()
+    maStream.value?.scrollTo({ top: maStream.value.scrollHeight })
+  },
+)
+function maSend() {
+  if (ma.turnLoading) return
+  const v = input.value.trim()
+  input.value = ''
+  void (async () => {
+    // 发送前整体覆盖快照（含本次输入），供「重试」退回本轮
+    await adventure.captureMaTurn(v)
+    await ma.submit(v || undefined)
+    await applyMaSavePatch()
+    syncSceneValue()
+  })()
+}
+// 每轮结束后应用旁白产生的存档变更（面板/背包/位置等）
+async function applyMaSavePatch() {
+  const p = ma.ma?.pendingSavePatch
+  if (!p) return
+  await ma.patchMa({ pendingSavePatch: null })
+  await adventure.applyExternalSavePatch(p)
+}
+// 把当前场景值同步给多智能体（用于世界书精确匹配）
+function syncSceneValue() {
+  const w = worldStore.currentWorld
+  const save = adventure.currentSave
+  if (!w?.sceneField || !save) return
+  const v = String(save.panel[w.sceneField] ?? '')
+  if (v && v !== (ma.ma?.sceneValue ?? '')) void ma.patchMa({ sceneValue: v })
+}
+// 重试：整体退回本轮（与普通模式语义一致），输入填回输入框供修改
+async function maRetry() {
+  if (ma.turnLoading) return
+  if (!window.confirm('退回本轮？本轮生成的剧情、角色记忆与状态都会被撤销；你的输入会填回输入框，可修改后再发送。')) return
+  try {
+    const restored = await adventure.retryMaTurn()
+    if (restored !== null) input.value = restored
+    syncSceneValue()
+  } catch (e) {
+    ma.error = e instanceof Error ? e.message : String(e)
+  }
+}
+function maChoose(o: string) {
+  input.value = o
+  void nextTick(() => actionInputEl.value?.focus())
+}
+async function ensureMa() {
+  const id = worldStore.currentWorldId
+  if (id) await ma.open(id)
+}
+async function onMaAutoAdvanceInput(e: Event) {
+  const n = Math.round(Number((e.target as HTMLInputElement).value))
+  if (!Number.isFinite(n)) return
+  await ensureMa()
+  await ma.patchMa({ autoAdvance: Math.max(1, Math.min(10, n)) })
+}
+async function onMaHeartbeatInput(e: Event) {
+  const n = Math.round(Number((e.target as HTMLInputElement).value))
+  if (!Number.isFinite(n)) return
+  await ensureMa()
+  await ma.patchMa({ heartbeatInterval: Math.max(1, Math.min(10, n)) })
+}
 const difficultyOrder = ['easy', 'normal', 'hard', 'nightmare'] as const
 const difficultyLabels = ['简单', '正常', '困难', '噩梦']
 const difficultyIndex = computed(() => {
@@ -96,7 +185,11 @@ async function saveRewrite() {
 const worldName = computed(() => worldStore.currentWorld?.name ?? '未选择世界')
 const currentPage = computed(() => adventure.currentPage)
 const pageIndicator = computed(() =>
-  adventure.hasAdventure ? `${adventure.currentIndex + 1} / ${adventure.totalPages}` : '',
+  isMultiAgent.value
+    ? ''
+    : adventure.hasAdventure
+      ? `${adventure.currentIndex + 1} / ${adventure.totalPages}`
+      : '',
 )
 const canPrev = computed(() => adventure.currentIndex > 0)
 const canNext = computed(() => adventure.currentIndex < adventure.totalPages - 1)
@@ -184,6 +277,9 @@ function triggerBgm() {
 
 
 onMounted(async () => {
+  if (isMultiAgent.value && worldStore.currentWorldId) {
+    await ma.open(worldStore.currentWorldId)
+  }
   void setBgmMuted(settings.muted)
   triggerBgm()
   // 恢复被后台中断的 startAdventure 输入
@@ -236,10 +332,26 @@ async function begin() {
     adventure.error = '请先在「我的」页面完成 API 配置'
     return
   }
-  await adventure.startAdventure(startInput.value.trim(), {
+  const opts = {
     summarize: enhanceSummarize.value,
     expand: enhanceExpand.value,
-  }, hiddenPreset.value)
+  }
+  if (isMultiAgent.value) {
+    const wid = worldStore.currentWorldId
+    if (wid) await ma.open(wid)
+    await adventure.startAdventure(startInput.value.trim(), opts, hiddenPreset.value)
+    const page = adventure.currentPage
+    if (wid && page) {
+      await ma.seedOpening({
+        worldId: wid,
+        playerInput: startInput.value.trim(),
+        narration: page.narration,
+        playerProfile: adventure.currentSave?.characterProfile ?? startInput.value.trim(),
+      })
+    }
+    return
+  }
+  await adventure.startAdventure(startInput.value.trim(), opts, hiddenPreset.value)
 }
 
 function prev() {
@@ -291,6 +403,13 @@ async function rollback() {
           重试
         </button>
         <button
+          v-if="isMultiAgent && adventure.pendingMaTurn && !ma.turnLoading"
+          class="rollback-btn"
+          @click="maRetry"
+        >
+          重试
+        </button>
+        <button
           v-if="worldStore.currentWorld?.dlcId"
           class="mute-btn"
           :class="{ muted: settings.muted }"
@@ -303,7 +422,7 @@ async function rollback() {
     </header>
 
     <!-- 未开始冒险 -->
-    <div v-if="!adventure.hasAdventure" class="start">
+    <div v-if="!hasAnyAdventure" class="start">
       <h2>开始你的冒险</h2>
       <p class="start-tip">请描述你想扮演的角色，AI 会为你整理角色设定并拉开序幕</p>
       <textarea
@@ -335,6 +454,71 @@ async function rollback() {
 
     <!-- 冒险中 -->
     <template v-else>
+      <!-- 多智能体模式：消息流 -->
+      <template v-if="isMultiAgent">
+        <div class="ma-head">
+          <span class="ma-clock">{{ maClock }}</span>
+          <span v-if="ma.beatsTotal > 1" class="ma-beats">自动 {{ ma.beatsDone }}/{{ ma.beatsTotal }}</span>
+        </div>
+        <div ref="maStream" class="ma-stream">
+          <p v-if="ma.messages.length === 0" class="ma-empty">发送第一句话，故事就开始了。</p>
+          <div
+            v-for="m in ma.messages"
+            :key="m.id"
+            class="ma-msg"
+            :class="{ self: m.speakerId === PLAYER_ID, narrator: m.speakerId === NARRATOR_ID }"
+          >
+            <div class="ma-speaker">
+              {{ m.speakerName }}
+              <span v-if="settings.maGodView && !m.knows.includes(PLAYER_ID)" class="ma-blind">你的角色不知情</span>
+            </div>
+            <div class="ma-text">{{ m.text }}</div>
+          </div>
+          <div v-if="ma.turnLoading" class="ma-thinking">
+            推进中 {{ ma.beatsDone }}/{{ ma.beatsTotal || 1 }}…
+          </div>
+        </div>
+        <div v-if="settings.maGodView && (ma.ma?.secrets.length ?? 0) > 0" class="ma-secrets">
+          <p class="ma-secrets-title">旁白的伏笔（{{ ma.ma?.secrets.length }}）</p>
+          <p v-for="s in ma.ma?.secrets ?? []" :key="s.id" class="ma-secret">
+            · {{ s.text }}<span v-if="s.expiresAtDay">（第 {{ s.expiresAtDay }} 天后过期）</span>
+          </p>
+        </div>
+        <div class="ma-controls">
+          <div v-if="ma.pendingPlayer" class="ma-waiting">大家都在等你。</div>
+          <button
+            v-for="(o, i) in ma.currentOptions"
+            :key="i"
+            class="option"
+            :disabled="ma.turnLoading"
+            @click="maChoose(o)"
+          >
+            {{ o }}
+          </button>
+          <div class="input-row">
+            <textarea
+              ref="actionInputEl"
+              v-model="input"
+              class="input"
+              rows="3"
+              placeholder="说点什么，或描述你的行动…（Ctrl+Enter 发送）"
+              :disabled="ma.turnLoading"
+              @keydown.ctrl.enter.prevent="maSend"
+              @keydown.meta.enter.prevent="maSend"
+            />
+            <button class="send" :disabled="ma.turnLoading" @click="maSend">
+              {{ input.trim() ? '发送' : '继续' }}
+            </button>
+          </div>
+          <p class="ma-hint">空着发送 = 让场景继续。轮到你的角色时可以自由插话。</p>
+          <div v-if="ma.error" class="error-row">
+            <span class="error">⚠ {{ ma.error }}</span>
+          </div>
+        </div>
+      </template>
+
+      <!-- 普通模式：分页阅读 -->
+      <template v-else>
       <div class="reader">
         <button class="nav prev" :disabled="!canPrev" @click="prev">‹</button>
         <div ref="readerBody" class="reader-body">
@@ -436,6 +620,49 @@ async function rollback() {
                 @change="settings.setAllowRewrite(($event.target as HTMLInputElement).checked)"
               />
             </label>
+            <template v-if="isMultiAgent">
+              <div class="setting-row">
+                <span class="setting-label">自动推进</span>
+                <input
+                  type="range"
+                  class="difficulty-range"
+                  min="1"
+                  max="10"
+                  step="1"
+                  :value="maAutoAdvance"
+                  @input="onMaAutoAdvanceInput"
+                />
+                <span class="difficulty-value">{{ maAutoAdvance }} 拍</span>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">旁白心跳</span>
+                <input
+                  type="range"
+                  class="difficulty-range"
+                  min="1"
+                  max="10"
+                  step="1"
+                  :value="maHeartbeat"
+                  @input="onMaHeartbeatInput"
+                />
+                <span class="difficulty-value">{{ maHeartbeat }} 拍</span>
+              </div>
+              <div class="setting-hint">
+                自动推进：每轮最多连续推进几拍（1 = 每次都由你发送）；轮到你的角色时立即暂停并重新计数。
+                旁白心跳：连续多少拍没有旁白就强制插入一次，避免场景与伏笔过时。
+              </div>
+              <label class="setting-row">
+                <span class="setting-label">上帝视角</span>
+                <input
+                  type="checkbox"
+                  :checked="settings.maGodView"
+                  @change="settings.setMaGodView(($event.target as HTMLInputElement).checked)"
+                />
+              </label>
+              <div v-if="settings.maGodView" class="setting-hint">
+                标出你的角色不知情的消息，并显示旁白的伏笔清单。仅供复盘与排查，不影响剧情推进。
+              </div>
+            </template>
           </template>
         </div>
         <button
@@ -464,6 +691,7 @@ async function rollback() {
         </div>
       </div>
       <button v-else class="to-latest" @click="goLatest">回到最新 →</button>
+      </template>
     </template>
 
     <div v-if="bgmMissing" class="bgm-missing-row">
@@ -600,12 +828,98 @@ async function rollback() {
   padding: 8px 10px;
   font-size: 14px;
 }
+.ma-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 2px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ma-stream {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 6px 2px;
+  min-height: 120px;
+}
+.ma-empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 28px 0;
+  font-size: 13px;
+}
+.ma-msg {
+  margin-bottom: 14px;
+  max-width: 94%;
+}
+.ma-msg.self {
+  margin-left: auto;
+  text-align: right;
+}
+.ma-speaker {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.ma-text {
+  font-size: var(--font-size-narration, 16px);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+.ma-msg.narrator .ma-text {
+  color: #b9b3a3;
+}
+.ma-msg.self .ma-text {
+  color: #d9d2c0;
+}
+.ma-thinking {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 6px 0;
+}
+.ma-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ma-waiting {
+  font-size: 12px;
+  color: #c9a227;
+}
+.ma-blind {
+  margin-left: 6px;
+  font-size: 10px;
+  color: #b07b7b;
+  border: 1px solid rgba(200, 120, 120, 0.35);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.ma-secrets {
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ma-secrets-title {
+  color: #b07b7b;
+  margin-bottom: 4px;
+}
+.ma-secret {
+  line-height: 1.6;
+}
+.ma-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
 .reader {
   display: flex;
   flex: 1;
   min-height: 0;
-}
-.nav {
+}.nav {
   position: fixed;
   top: 50%;
   transform: translateY(-50%);

@@ -1,23 +1,26 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useWorldStore } from '@/stores/world'
 import { useAdventureStore } from '@/stores/adventure'
 import { useSettingsStore } from '@/stores/settings'
+import { useMaStore } from '@/stores/multiagent'
 import { generateWorld } from '@/ai/service'
 import { errorMessage } from '@/ai/client'
 import { downloadJSON, pickJSONFile, safeFilename, timestamp } from '@/utils/file'
 import { pickZipFile, parseDlcZip, persistDlcAudio, removeDlcAudio } from '@/dlc'
 import { clearBgmCache } from '@/audio/bgm'
-import { createId } from '@/types'
+import { createId, NARRATOR_ID, PLAYER_ID } from '@/types'
 import type { PanelField, World, LoreEntry } from '@/types'
 
 const worldStore = useWorldStore()
 const adventure = useAdventureStore()
 const settings = useSettingsStore()
+const ma = useMaStore()
 
 const showCreate = ref(false)
 const newName = ref('')
 const newDesc = ref('')
+const newMultiAgent = ref(false)
 
 const enhanceSummarize = ref(true) // 总结优化已有设定
 const enhanceExpand = ref(true) // 补充更多合理设定
@@ -39,6 +42,10 @@ interface LoreEditRow {
   lastVisitedTimeText: string
   tagsText: string
   content: string
+  persona: string
+  memory: string
+  accessMode: 'public' | 'secret' | 'knownBy'
+  accessWhoText: string
   required: boolean
   fixed?: boolean
   linksText: string
@@ -51,7 +58,7 @@ const editLoreFilter = ref('')
 const editLoreOrder = ref<'asc' | 'desc'>('asc')
 const confirmLoreDeleteId = ref<string | null>(null)
 const editIsPreview = ref(false) // 新建世界后预览模式
-const editTab = ref<'core' | 'schema' | 'lore'>('core')
+const editTab = ref<'core' | 'schema' | 'lore' | 'agents'>('core')
 const importError = ref('')
 const exporting = ref(false)
 const importing = ref(false)
@@ -142,10 +149,11 @@ async function doCreate() {
       },
     )
     const name = newName.value.trim() || newDesc.value.trim().slice(0, 12)
-    const world = await worldStore.createWorld(name, worldSetting, panelSchema, lorebook)
+    const world = await worldStore.createWorld(name, worldSetting, panelSchema, lorebook, newMultiAgent.value)
     showCreate.value = false
     newName.value = ''
     newDesc.value = ''
+    newMultiAgent.value = false
     // 生成后自动打开设定页让用户预览拆分结果
     openEdit(world)
     editIsPreview.value = true
@@ -162,10 +170,11 @@ async function createEmptyWorld() {
   createError.value = ''
   try {
     const name = newName.value.trim() || '未命名世界'
-    const world = await worldStore.createWorld(name, '', [], [])
+    const world = await worldStore.createWorld(name, '', [], [], newMultiAgent.value)
     showCreate.value = false
     newName.value = ''
     newDesc.value = ''
+    newMultiAgent.value = false
     // 切换冒险上下文到新世界（空世界无存档，冒险页会回到「开始冒险」状态），避免残留上一个世界的存档
     await adventure.open(world.id)
     // 直接打开设定页，方便玩家从零开始填写
@@ -188,26 +197,147 @@ function openEdit(w: World) {
   } catch {
     editSchema.value = []
   }
-  editLorebook.value = (w.lorebook ?? []).map((e) => ({
-    id: e.id,
-    title: e.title ?? '',
-    aliasesText: (e.aliases ?? []).join(', '),
-    lastVisitedTimeText: e.lastVisitedTime ?? '',
-    tagsText: (e.tags ?? []).join(', '),
-    content: e.content ?? '',
-    required: !!e.required,
-    fixed: !!e.fixed,
-    linksText: (e.links ?? []).join(', '),
-    hidden: e.hidden,
-    isLocation: e.isLocation,
-    isCharacter: e.isCharacter,
-  }))
+  editLorebook.value = (w.lorebook ?? []).map((e) => {
+    const isChar = e.isCharacter === true
+    return {
+      id: e.id,
+      title: e.title ?? '',
+      aliasesText: (e.aliases ?? []).join(', '),
+      lastVisitedTimeText: e.lastVisitedTime ?? '',
+      tagsText: (e.tags ?? []).join(', '),
+      // 人物条目：content 迁入 persona 后清空，避免两个输入框内容重复
+      content: isChar ? '' : (e.content ?? ''),
+      persona: isChar ? (e.persona ?? e.content ?? '') : '',
+      memory: isChar ? (e.memory ?? '') : '',
+      accessMode: e.access?.mode ?? 'public',
+      accessWhoText: (e.access?.who ?? []).join(', '),
+      required: !!e.required,
+      fixed: !!e.fixed,
+      linksText: (e.links ?? []).join(', '),
+      hidden: e.hidden,
+      isLocation: e.isLocation,
+      isCharacter: e.isCharacter,
+    }
+  })
   editLoreFilter.value = ''
   confirmLoreDeleteId.value = null
   editError.value = ''
   editIsPreview.value = false
   editTab.value = 'core'
+  editMultiAgent.value = w.multiAgent === true
+  expandedAgent.value = null
+  if (editMultiAgent.value) void ma.open(w.id)
   showEdit.value = true
+}
+
+// 编辑另一个世界时 ma store 会被切到 editId；关闭弹窗后必须切回当前冒险世界，
+// 否则冒险页读到的会是别的世界的角色状态。
+watch(showEdit, (v) => {
+  if (v) return
+  const id = worldStore.currentWorldId
+  if (id && worldStore.currentWorld?.multiAgent) void ma.open(id)
+})
+
+// ===== 智能体面板 =====
+const editMultiAgent = ref(false)
+const expandedAgent = ref<string | null>(null)
+const agentDraft = ref({ privatePersona: '', memory: '', memorySummary: '' })
+
+interface AgentRow {
+  charId: string
+  name: string
+  role: string
+  assigned: boolean
+  system: boolean
+  memoryLen: number
+  present: boolean
+}
+
+const agentRows = computed<AgentRow[]>(() => {
+  if (!editMultiAgent.value) return []
+  const rows: AgentRow[] = []
+  const narrator = ma.agentOf(NARRATOR_ID)
+  rows.push({
+    charId: NARRATOR_ID,
+    name: '旁白',
+    role: '叙事与裁决',
+    assigned: true,
+    system: true,
+    memoryLen: (narrator?.memory ?? '').length,
+    present: true,
+  })
+  const player = ma.agentOf(PLAYER_ID)
+  rows.push({
+    charId: PLAYER_ID,
+    name: player?.name || '你',
+    role: '玩家角色',
+    assigned: true,
+    system: true,
+    memoryLen: (player?.memory ?? '').length,
+    present: true,
+  })
+  for (const e of editLorebook.value) {
+    if (!e.isCharacter) continue
+    const a = ma.agentOf(e.id)
+    rows.push({
+      charId: e.id,
+      name: e.title.trim() || '（未命名人物）',
+      role: 'NPC',
+      assigned: !!a,
+      system: false,
+      memoryLen: (a?.memory ?? '').length,
+      present: a?.present === true,
+    })
+  }
+  return rows
+})
+
+function openAgentPanel(charId: string) {
+  const a = ma.agentOf(charId)
+  if (!a) return
+  expandedAgent.value = charId
+  agentDraft.value = {
+    privatePersona: a.privatePersona,
+    memory: a.memory,
+    memorySummary: a.memorySummary ?? '',
+  }
+}
+
+async function saveAgentPanel() {
+  const id = expandedAgent.value
+  if (!id) return
+  await ma.updateAgent(id, { ...agentDraft.value })
+  expandedAgent.value = null
+}
+
+async function toggleAssign(row: AgentRow) {
+  if (row.system) return
+  if (row.assigned) {
+    if (!confirm(`取消「${row.name}」的独立智能体？该角色的私有设定与记忆会被删除，且无法恢复。`)) return
+    await ma.unassign(row.charId)
+    if (expandedAgent.value === row.charId) expandedAgent.value = null
+    return
+  }
+  const e = editLorebook.value.find((x) => x.id === row.charId)
+  if (!e) return
+  await ma.assign({
+    id: e.id,
+    title: e.title,
+    tags: [],
+    content: '',
+    persona: e.persona,
+    memory: e.memory,
+    isCharacter: true,
+  })
+}
+
+async function clearAgentMemory(charId: string) {
+  if (!confirm('清空该角色的全部记忆？（私有设定不受影响）')) return
+  await ma.clearMemory(charId)
+  if (expandedAgent.value === charId) {
+    const a = ma.agentOf(charId)
+    if (a) agentDraft.value = { privatePersona: a.privatePersona, memory: a.memory, memorySummary: a.memorySummary ?? '' }
+  }
 }
 
 function addField() {
@@ -235,7 +365,7 @@ function normalizeListText(v: string): string {
 }
 
 function addLoreEntry() {
-  editLorebook.value.push({ id: createId(), title: '', aliasesText: '', lastVisitedTimeText: '', tagsText: '', content: '', required: false, linksText: '' })
+  editLorebook.value.push({ id: createId(), title: '', aliasesText: '', lastVisitedTimeText: '', tagsText: '', content: '', persona: '', memory: '', accessMode: 'public', accessWhoText: '', required: false, linksText: '' })
 }
 
 function removeLoreEntry(id: string) {
@@ -252,11 +382,12 @@ const filteredLorebook = computed(() => {
   if (!q) return editLorebook.value
   return editLorebook.value
     .map((e) => {
+      const body = `${e.content}\n${e.persona}\n${e.memory}`.toLowerCase()
       const rank = e.title.toLowerCase().includes(q)
         ? 0
         : e.tagsText.toLowerCase().includes(q)
           ? 1
-          : e.content.toLowerCase().includes(q)
+          : body.includes(q)
             ? 2
             : 3
       return { e, rank }
@@ -297,8 +428,17 @@ async function saveEdit() {
   }
   const lorebook: LoreEntry[] = []
   for (const r of editLorebook.value) {
-    const content = r.content.trim()
-    if (!content) continue
+    const isChar = r.isCharacter === true
+    const persona = r.persona.trim()
+    const memory = r.memory.trim()
+    // 非人物条目用 content；人物条目用 persona/memory，取消勾选「人物」时回退到 content 兜底
+    const content = isChar ? '' : (r.content.trim() || persona || memory)
+    const finalPersona = isChar ? (persona || content) : ''
+    if (isChar) {
+      if (!finalPersona && !memory) continue
+    } else if (!content) {
+      continue
+    }
     const tags = r.tagsText
       .split(/[,，]/)
       .map((t) => t.trim())
@@ -312,6 +452,11 @@ async function saveEdit() {
       .map((t) => t.trim())
       .filter((t) => !!t)
     const lastVisitedTime = r.lastVisitedTimeText.trim()
+    const whoList = r.accessWhoText.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+    const access =
+      r.accessMode === 'public'
+        ? undefined
+        : { mode: r.accessMode, who: r.accessMode === 'knownBy' ? whoList : undefined }
     lorebook.push({
       id: r.id,
       title: r.title.trim() || undefined,
@@ -319,6 +464,10 @@ async function saveEdit() {
       lastVisitedTime: lastVisitedTime || undefined,
       tags,
       content,
+      persona: isChar ? (finalPersona || undefined) : undefined,
+      memory: isChar ? (memory || undefined) : undefined,
+      migrated: isChar ? true : undefined,
+      access,
       required: r.required,
       fixed: r.fixed === true ? true : undefined,
       links: links.length > 0 ? links : undefined,
@@ -574,6 +723,14 @@ async function doImportDlc() {
           <span>补充更多合理设定</span>
         </label>
         <p class="desc-hint">两者都不勾选：仅按原文忠实整理，尽量不改动内容</p>
+        <label class="checkbox-row">
+          <input type="checkbox" v-model="newMultiAgent" />
+          <span>多智能体模式</span>
+        </label>
+        <p class="desc-hint">
+          每个在场角色由独立 AI 扮演，各自拥有私密设定与记忆；旁白负责环境与未分配的路人。
+          创建后不可更改（想换模式可复制世界）。
+        </p>
         <p v-if="createError" class="error">{{ createError }}</p>
         <div class="modal-actions">
           <button class="btn ghost" @click="showCreate = false">取消</button>
@@ -595,6 +752,9 @@ async function doImportDlc() {
           <button class="edit-tab" :class="{ active: editTab === 'schema' }" @click="editTab = 'schema'">面板字段</button>
           <button class="edit-tab" :class="{ active: editTab === 'lore' }" @click="editTab = 'lore'">
             世界书<span v-if="editLorebook.length" class="tab-count">{{ editLorebook.length }}</span>
+          </button>
+          <button class="edit-tab" :class="{ active: editTab === 'agents' }" @click="editTab = 'agents'">
+            智能体<span v-if="editMultiAgent && ma.npcs.length" class="tab-count">{{ ma.npcs.length }}</span>
           </button>
         </div>
 
@@ -678,15 +838,81 @@ async function doImportDlc() {
                 </label>
               </div>
               <input v-model="entry.aliasesText" @blur="entry.aliasesText = normalizeListText(entry.aliasesText)" class="input lore-tags" placeholder="别名/曾用称呼（逗号分隔，如：神秘人, 旧称）" />
+              <select v-if="editMultiAgent" v-model="entry.accessMode" class="input lore-tags">
+                <option value="public">可见性：公开（所有角色都能知道）</option>
+                <option value="secret">可见性：秘密（仅旁白可见）</option>
+                <option v-if="entry.accessMode === 'knownBy'" value="knownBy">
+                  可见性：仅指定角色（由剧情揭示）
+                </option>
+              </select>
               <input v-model="entry.lastVisitedTimeText" class="input lore-tags" placeholder="上次到访时间（冒险时间，如：启程第12天·深秋·入夜前）" />
               <input v-model="entry.tagsText" @blur="entry.tagsText = normalizeListText(entry.tagsText)" class="input lore-tags" placeholder="标签（逗号分隔，如：山脉, 鹰族, 边境）" />
               <input v-model="entry.linksText" @blur="entry.linksText = normalizeListText(entry.linksText)" class="input lore-tags" placeholder="关联条目（逗号分隔的条目标题，注入时一并带入）" />
-              <textarea v-model="entry.content" class="textarea" rows="4" placeholder="条目详细设定内容" />
+              <template v-if="entry.isCharacter">
+                <label class="field-label lore-sub-label">设定（身份/性格/关系基础，相对稳定）</label>
+                <textarea v-model="entry.persona" class="textarea" rows="4" placeholder="这个人物是谁：身份、性格、外貌、能力、与他人的关系基础" />
+                <label class="field-label lore-sub-label">记忆（经历/承诺/状态，随剧情更新）</label>
+                <textarea v-model="entry.memory" class="textarea" rows="4" placeholder="这个人物记得什么：每条以时间开头，如「第3天：答应带你同行」" />
+              </template>
+              <textarea v-else v-model="entry.content" class="textarea" rows="4" placeholder="条目详细设定内容" />
             </div>
             <p v-if="displayedLorebook.length === 0" class="muted-text">
               {{ editLorebook.length === 0 ? '暂无世界书条目' : '没有匹配的条目' }}
             </p>
           </div>
+        </div>
+
+        <div v-if="editTab === 'agents'" class="edit-panel">
+          <template v-if="editMultiAgent">
+            <p class="desc-hint">
+              勾选「独立智能体」后，该角色由单独的 AI 扮演并拥有私有设定与记忆。
+              旁白与玩家角色始终存在，也可在此编辑。
+            </p>
+            <div v-for="row in agentRows" :key="row.charId" class="agent-card">
+              <div class="agent-head">
+                <button class="agent-name-btn" @click="openAgentPanel(row.charId)">
+                  {{ row.name }}<span class="agent-role">{{ row.role }}</span>
+                </button>
+                <label v-if="!row.system" class="lore-required">
+                  <input type="checkbox" :checked="row.assigned" @change="toggleAssign(row)" />
+                  <span>独立智能体</span>
+                </label>
+                <span v-else class="agent-badge">系统</span>
+              </div>
+              <p v-if="row.assigned" class="agent-meta">
+                记忆 {{ row.memoryLen }} 字{{ row.present ? ' · 在场' : '' }}
+              </p>
+              <template v-if="expandedAgent === row.charId">
+                <label class="lore-sub-label">私有设定（仅本人上下文可见）</label>
+                <textarea
+                  v-model="agentDraft.privatePersona"
+                  class="textarea"
+                  rows="4"
+                  placeholder="只有这个角色自己知道的设定：秘密、真实目的、内心立场"
+                />
+                <label class="lore-sub-label">记忆（每条以时间开头）</label>
+                <textarea
+                  v-model="agentDraft.memory"
+                  class="textarea"
+                  rows="6"
+                  placeholder="第3天：他答应了带你同行……"
+                />
+                <label class="lore-sub-label">记忆摘要（更早内容的压缩，可留空）</label>
+                <textarea v-model="agentDraft.memorySummary" class="textarea" rows="3" placeholder="更早经历的摘要" />
+                <div class="agent-actions">
+                  <button class="btn primary" @click="saveAgentPanel">保存</button>
+                  <button class="btn ghost" @click="expandedAgent = null">取消</button>
+                  <button class="btn ghost" @click="clearAgentMemory(row.charId)">清空记忆</button>
+                </div>
+              </template>
+            </div>
+            <p v-if="agentRows.length <= 2" class="muted-text">
+              世界书里还没有人物条目，先到「世界书」添加条目并勾选「人物」。
+            </p>
+          </template>
+          <p v-else class="muted-text">
+            这个世界未开启多智能体模式。该模式需在创建世界时选择，创建后不可更改。
+          </p>
         </div>
 
       </div>
@@ -1130,6 +1356,55 @@ async function doImportDlc() {
   font-size: 13px;
   text-align: center;
   padding: 12px 0;
+}
+.lore-sub-label {
+  display: block;
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.agent-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.agent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.agent-name-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.agent-role {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.agent-badge {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+.agent-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.agent-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
 }
 .edit-tabs {
   display: flex;

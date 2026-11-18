@@ -28,6 +28,13 @@ const LORE_LIMIT_KEY = 'lore_limit'
 const LORE_BUDGET_KEY = 'lore_budget'
 const LINK_BUDGET_KEY = 'link_budget'
 const WORLD_SETTING_MAX_KEY = 'world_setting_max'
+// ===== 多智能体模式设置 =====
+const MA_AUTO_ADVANCE_KEY = 'ma_auto_advance'
+const MA_NARRATOR_HEARTBEAT_KEY = 'ma_narrator_heartbeat'
+const MA_PERSONA_THRESHOLD_KEY = 'ma_persona_threshold'
+const MA_MEMORY_THRESHOLD_KEY = 'ma_memory_threshold'
+const MA_DISPATCH_MODE_KEY = 'ma_dispatch_mode'
+const MA_GOD_VIEW_KEY = 'ma_god_view'
 const LORE_COMPRESS_THRESHOLD_KEY = 'lore_compress_threshold'
 const OPTION_COUNT_KEY = 'option_count'
 const FONT_SIZE_KEY = 'font_size'
@@ -78,6 +85,14 @@ export const useSettingsStore = defineStore('settings', {
     linkBudget: 2000, // 关联条目额外字符预算
     worldSettingMax: 3000, // 核心设定字数上限
     loreCompressThreshold: 1200, // 世界书单个条目超过该字符数时自动压缩（0 表示关闭）
+    // ===== 多智能体模式（默认值，可在「我的」中修改）=====
+    maAutoAdvance: 1, // 每轮自动推进拍数（1 = 不自动推进，等玩家输入）
+    maNarratorHeartbeat: 3, // 旁白心跳：连续多少拍未调用旁白则强制调用一次
+    maPersonaThreshold: 3000, // 智能体「设定」压缩阈值
+    maMemoryThreshold: 2000, // 智能体「记忆」压缩阈值（玩家反感失忆，放宽）
+    // 调度方式：director=每拍都调导演；hybrid=本地打分优先（省 token）；solo=一对一快速（仅 1 名 NPC 时生效）
+    maDispatchMode: 'director' as 'director' | 'hybrid' | 'solo',
+    maGodView: false, // 上帝视角：显示角色不知情的消息与旁白伏笔
     optionCount: 3, // 每轮选项数量上限
     fontSize: 16, // 正文字体大小（px）
     textColor: '#ffffff', // 全局文本颜色
@@ -208,6 +223,42 @@ export const useSettingsStore = defineStore('settings', {
         this.loreCompressThreshold = typeof lct === 'number' && isFinite(lct) && lct >= 0 ? Math.round(lct) : 1200
       } catch {
         this.loreCompressThreshold = 1200
+      }
+      try {
+        const v = await getSetting<number>(MA_AUTO_ADVANCE_KEY)
+        this.maAutoAdvance = typeof v === 'number' && isFinite(v) && v >= 1 && v <= 10 ? Math.round(v) : 1
+      } catch {
+        this.maAutoAdvance = 1
+      }
+      try {
+        const v = await getSetting<number>(MA_NARRATOR_HEARTBEAT_KEY)
+        this.maNarratorHeartbeat = typeof v === 'number' && isFinite(v) && v >= 1 && v <= 10 ? Math.round(v) : 3
+      } catch {
+        this.maNarratorHeartbeat = 3
+      }
+      try {
+        const v = await getSetting<number>(MA_PERSONA_THRESHOLD_KEY)
+        this.maPersonaThreshold = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 3000
+      } catch {
+        this.maPersonaThreshold = 3000
+      }
+      try {
+        const v = await getSetting<number>(MA_MEMORY_THRESHOLD_KEY)
+        this.maMemoryThreshold = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 2000
+      } catch {
+        this.maMemoryThreshold = 2000
+      }
+      try {
+        const v = await getSetting<string>(MA_DISPATCH_MODE_KEY)
+        this.maDispatchMode = v === 'hybrid' || v === 'solo' ? v : 'director'
+      } catch {
+        this.maDispatchMode = 'director'
+      }
+      try {
+        const v = await getSetting<boolean>(MA_GOD_VIEW_KEY)
+        this.maGodView = v === true
+      } catch {
+        this.maGodView = false
       }
       try {
         const oc = await getSetting<number>(OPTION_COUNT_KEY)
@@ -414,6 +465,35 @@ export const useSettingsStore = defineStore('settings', {
       const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 1200
       this.loreCompressThreshold = n
       try { await putSetting(LORE_COMPRESS_THRESHOLD_KEY, n) } catch { /* ignore */ }
+    },
+    async setMaAutoAdvance(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v >= 1 && v <= 10 ? Math.round(v) : 1
+      this.maAutoAdvance = n
+      try { await putSetting(MA_AUTO_ADVANCE_KEY, n) } catch { /* ignore */ }
+    },
+    async setMaNarratorHeartbeat(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v >= 1 && v <= 10 ? Math.round(v) : 3
+      this.maNarratorHeartbeat = n
+      try { await putSetting(MA_NARRATOR_HEARTBEAT_KEY, n) } catch { /* ignore */ }
+    },
+    async setMaPersonaThreshold(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 3000
+      this.maPersonaThreshold = n
+      try { await putSetting(MA_PERSONA_THRESHOLD_KEY, n) } catch { /* ignore */ }
+    },
+    async setMaMemoryThreshold(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 2000
+      this.maMemoryThreshold = n
+      try { await putSetting(MA_MEMORY_THRESHOLD_KEY, n) } catch { /* ignore */ }
+    },
+    async setMaDispatchMode(v: 'director' | 'hybrid' | 'solo') {
+      const mode = v === 'hybrid' || v === 'solo' ? v : 'director'
+      this.maDispatchMode = mode
+      try { await putSetting(MA_DISPATCH_MODE_KEY, mode) } catch { /* ignore */ }
+    },
+    async setMaGodView(v: boolean) {
+      this.maGodView = v === true
+      try { await putSetting(MA_GOD_VIEW_KEY, this.maGodView) } catch { /* ignore */ }
     },
     async setOptionCount(v: number) {
       const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 3
