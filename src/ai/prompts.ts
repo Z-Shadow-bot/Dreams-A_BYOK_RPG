@@ -1,5 +1,6 @@
 import type { World, SaveData, PanelField, LoreEntry } from '@/types'
 import { NARRATOR_ID } from '@/types'
+import { isDualEntry, loreSettingText, loreEventText, loreSecondLabel } from '@/utils/lore'
 import type { Difficulty, NarrativeSpeed, NarrativeDetail, EventFrequency } from '@/stores/settings'
 
 // 每轮注入世界书条目的预算上限（字符）
@@ -94,6 +95,34 @@ export function buildAdventureRulesPart(rules?: AdventureRules): string {
   return `\n\n【冒险设置指令（高优先级，随本轮生效，务必执行）】\n${parts.join('\n')}`
 }
 
+// ===== 多智能体：旁白用全量四档；角色只取"描写细致程度"（改写为只约束括号内动作）=====
+export function buildMaNarratorRules(
+  rules: AdventureRules,
+  speed: NarrativeSpeed,
+): string {
+  const parts = [
+    eventFrequencyRule(rules.eventFrequency),
+    difficultyRule(rules.difficulty),
+    narrativeDetailRule(rules.narrativeDetail ?? 'normal'),
+    narrativeSpeedRule(speed),
+  ].filter(Boolean)
+  if (parts.length === 0) return ''
+  return `【叙事设置（作用于你：旁白）】\n${parts.map((p) => `- ${p}`).join('\n')}`
+}
+
+export function buildMaActorDetailRule(level?: NarrativeDetail): string {
+  switch (level ?? 'normal') {
+    case 'brief':
+      return '【动作描写·简洁】括号里的动作与神态只写关键一下，一句话带过；不要铺陈环境与过程。台词不受影响，该说多少说多少。'
+    case 'detailed':
+      return '【动作描写·精细】括号里的动作与神态可以写细一点：具体的手势、视线、呼吸、与身边物件的接触；但不要写环境，也不要写别人的反应。台词不受影响。'
+    case 'extreme':
+      return '【动作描写·极致】括号里的动作与神态可以写得很具体、带质感（触感、温度、气味、肌肉的紧绷），允许一两个短比喻；但不要写环境全景，不要抢台词的戏。台词不受影响。'
+    default:
+      return '【动作描写·正常】括号里的动作与神态点到为止，够让人看见画面即可；不铺陈环境，不影响台词的篇幅。'
+  }
+}
+
 // ===== 全局规则（每次生成"行动"和"存档"时都必须遵守） =====
 export function buildGlobalRules(_narrationMin: number, narrationMax: number): string {
   return `你是一个文字冒险游戏的叙事引擎。你必须严格遵循以下所有规则。
@@ -158,6 +187,7 @@ export function buildOutputFormat(_narrationMin: number, narrationMax: number, u
     { "title": "已有条目（增量删除）", "removeLines": ["已过时的旧描述片段"] },
     { "title": "人物条目（记忆增量）", "memoryAppend": "第3天：答应带你同行" },
     { "title": "人物条目（设定变更）", "personaAppend": "左手已残废，不再用剑" },
+    { "title": "地点条目（事件增量）", "eventAppend": "第5天：旧城门失火，无人伤亡" },
     { "title": "新条目或需整体改写", "aliases": ["别名", "曾用称呼"], "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
     { "title": "已死亡/损毁的条目", "content": "【已死亡】……（保留条目并改写为终态，切勿删除）" },
     { "title": "重复或误记的条目", "remove": true }
@@ -195,6 +225,7 @@ JSON 语法硬性要求（违反任一条都会导致解析失败）：
     { "title": "已有条目（增量删除）", "removeLines": ["已过时的旧描述片段"] },
     { "title": "人物条目（记忆增量）", "memoryAppend": "第3天：答应带你同行" },
     { "title": "人物条目（设定变更）", "personaAppend": "左手已残废，不再用剑" },
+    { "title": "地点条目（事件增量）", "eventAppend": "第5天：旧城门失火，无人伤亡" },
     { "title": "新条目或需整体改写", "aliases": ["别名", "曾用称呼"], "tags": ["标签","标签"], "content": "条目正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
     { "title": "已死亡/损毁的条目", "content": "【已死亡】……（保留条目并改写为终态，切勿删除）" },
     { "title": "重复或误记的条目", "remove": true }
@@ -337,13 +368,18 @@ export function loreVisibleTo(e: LoreEntry, viewerCharId?: string): boolean {
 // 条目的可注入正文。
 // 人物条目：persona（设定）+ memory（记忆）；memory 仅当 viewerCharId 为本人（或未指定=普通模式）时可见。
 export function loreEntryText(e: LoreEntry, viewerCharId?: string): string {
-  if (e.isCharacter) {
-    const persona = (e.persona ?? e.content ?? '').trim()
-    const memoryVisible = viewerCharId === undefined || viewerCharId === e.id
-    const memory = memoryVisible ? (e.memory ?? '').trim() : ''
-    if (!persona && !memory) return ''
-    if (!memory) return persona
-    return persona ? `${persona}\n【记忆】\n${memory}` : `【记忆】\n${memory}`
+  // 双字段条目：人物（设定+记忆）/ 地点（设定+事件），"记忆/事件"仅本人可见
+  if (isDualEntry(e)) {
+    const setting = loreSettingText(e)
+    const secondVisible = viewerCharId === undefined || viewerCharId === e.id
+    const second = secondVisible ? loreEventText(e) : ''
+    const summary = secondVisible ? (e.summary ?? '').trim() : ''
+    const label = loreSecondLabel(e)
+    const parts: string[] = []
+    if (setting) parts.push(setting)
+    if (summary) parts.push(`【${label}·摘要】\n${summary}`)
+    if (second) parts.push(`【${label}】\n${second}`)
+    return parts.join('\n')
   }
   return (e.content ?? '').trim()
 }
@@ -466,9 +502,15 @@ ${lines.join('\n')}
 # 世界书使用规则
 - 世界书条目必须与存档（overview、inventory、activeLocations、activeCharacters 等）保持一致，不得互相矛盾；若剧情推进改变了条目描述的事物，应通过 loreUpdates 同步更新该条目。
 - 条目内容增量更新（优先，省 token 且更稳）：更新已有条目时，优先只输出变化——appendContent 追加新信息（可用 appendTo 指定追加到某个【栏目】末尾，如"关键记忆"）；removeLines 删除包含指定子串的旧行；只有需要整体重构/合并时才用 content 输出完整新内容。未提供 content 时，条目原有内容保持不变，不会被清空。
-- 人物条目（isCharacter）分「persona 设定」与「memory 记忆」两块：persona 只放身份/性格/关系基础/能力等相对稳定的信息；memory 放经历、承诺、状态变化，每条以时间开头（如"第12天：……"）。更新人物时优先用 memoryAppend 追加记忆、personaAppend 追加设定变化；只有需要整体重写时才输出 persona/memory 全文。非人物条目继续用 content/appendContent。
+- 人物条目（isCharacter）分「persona 设定」与「memory 记忆」两块；地点条目（isLocation）分「setting 设定」与「event 事件」两块。设定栏写"这个人/这个地方是什么"，第二栏写"发生过什么"。更新时优先用增量字段（personaAppend / memoryAppend / settingAppend / eventAppend），只有需要整体重写时才输出全文字段。
+- **判断该写哪一栏，看"影响会持续多久"，不是看"会不会变"**：
+  - 会长期约束或改变它是什么的（结为朋友、结仇、立誓、残疾、身份暴露、定下规矩、地形永久改变）→ 写进**设定栏**；
+  - 一次性发生、过后不再影响判断的（今天吃了什么、路上闲聊两句）→ 写进**第二栏**；
+  - 同一件事既有经过又有长期后果：后果写进设定栏，经过写进第二栏，两边各写各的，不要互相重复。
+- 设定栏里已经写过的不在第二栏重复。第二栏每条以时间开头（如"第12天：……"），写"谁做了什么、结果如何"，不写氛围、修辞与心理描写。
+- 既不是人物也不是地点的条目继续用 content/appendContent。不要把地点事件塞进 setting，也不要把人物记忆塞进 persona——混在一起会让条目越来越乱。
 - 若玩家指令与某世界书设定冲突：不要拒绝玩家，也不得歪曲或悄悄改写设定来迎合玩家；应当推断"在该设定约束下，玩家行动会产生的合理、自然后果"并如实呈现。例如：石碑被设定为不可破坏，玩家执意挥锤猛砸，则锤柄崩裂、虎口震麻，石碑纹丝不动。
-- 地点与人物信息全部通过世界书条目存储：每个地点对应一个 isLocation:true 条目，每个人物对应一个 isCharacter:true 条目。条目 title 用地点名/人名，content 记录详细情况（地点描述、人物介绍与态度、记忆与关系变化等）。不要在存档 map/characters 中存储这些信息（始终保持空数组）。
+- 地点与人物信息全部通过世界书条目存储：每个地点对应一个 isLocation:true 条目，每个人物对应一个 isCharacter:true 条目。条目 title 用地点名/人名；人物用 persona 记设定、memory 记记忆，地点用 setting 记设定、event 记事件。不要在存档 map/characters 中存储这些信息（始终保持空数组）。
   - 地点条目的 tags 应包含该地点可能出现的人物名字、地点别名、相关势力/组织等，以便人物在场时能命中注入。
   - 人物条目的 tags 应包含其所在地点的名字、人物别名、身份/职业等关联信息，以便玩家到达该地点或提及相关话题时能命中注入。
   - 会四处游走的人物（如旅行商人、游侠）：tags 不要只写固定地点，而应包含其活动范围、身份特征（如"旅行商人""游侠"）、可能出现的场所类型等，让其在合适的情境自然命中而非绑定单一地点。
@@ -770,6 +812,7 @@ export function buildActionRecoverySplitSavePrompt(
     { "title": "已有条目（增量删除）", "removeLines": ["已过时的旧描述片段"] },
     { "title": "人物条目（记忆增量）", "memoryAppend": "第3天：答应带你同行" },
     { "title": "人物条目（设定变更）", "personaAppend": "左手已残废，不再用剑" },
+    { "title": "地点条目（事件增量）", "eventAppend": "第5天：旧城门失火，无人伤亡" },
     { "title": "新条目或需整体改写", "aliases": ["别名", "曾用称呼"], "tags": ["标签"], "content": "正文", "required": false, "fixed": false, "links": ["关联条目标题"] },
     { "title": "已死亡/损毁的条目", "content": "【已死亡】……（保留条目并改写为终态，切勿删除）" },
     { "title": "重复或误记的条目", "remove": true }
@@ -779,7 +822,13 @@ export function buildActionRecoverySplitSavePrompt(
 
 【loreUpdates 规则】
 - 增量优先（省 token 且更稳）：更新已有条目时，优先只输出变化——用 appendContent 追加新信息（可用 appendTo 指定追加到某个【栏目】末尾）；用 removeLines 删除内容中包含指定子串的旧行；只有需要整体重构/合并时才用 content 输出完整新内容。未提供 content 时，条目原有内容保持不动（不会被清空）。
-- 人物条目（isCharacter）分「persona 设定」与「memory 记忆」两块：persona 只放身份/性格/关系基础/能力等相对稳定的信息；memory 放经历、承诺、状态变化，每条以时间开头（如"第12天：……"）。更新人物时优先用 memoryAppend 追加记忆、personaAppend 追加设定变化；只有需要整体重写时才输出 persona/memory 全文。非人物条目继续用 content/appendContent。
+- 人物条目（isCharacter）分「persona 设定」与「memory 记忆」两块；地点条目（isLocation）分「setting 设定」与「event 事件」两块。设定栏写"这个人/这个地方是什么"，第二栏写"发生过什么"。更新时优先用增量字段（personaAppend / memoryAppend / settingAppend / eventAppend），只有需要整体重写时才输出全文字段。
+- **判断该写哪一栏，看"影响会持续多久"，不是看"会不会变"**：
+  - 会长期约束或改变它是什么的（结为朋友、结仇、立誓、残疾、身份暴露、定下规矩、地形永久改变）→ 写进**设定栏**；
+  - 一次性发生、过后不再影响判断的（今天吃了什么、路上闲聊两句）→ 写进**第二栏**；
+  - 同一件事既有经过又有长期后果：后果写进设定栏，经过写进第二栏，两边各写各的，不要互相重复。
+- 设定栏里已经写过的不在第二栏重复。第二栏每条以时间开头（如"第12天：……"），写"谁做了什么、结果如何"，不写氛围、修辞与心理描写。
+- 既不是人物也不是地点的条目继续用 content/appendContent。不要把地点事件塞进 setting，也不要把人物记忆塞进 persona——混在一起会让条目越来越乱。
 - 终态标注：事物死亡/摧毁/损毁/完结时，保留条目并把 content 改写为终态（开头加"【已死亡】""【已损毁】"等前缀），切勿删除
 - 禁止重建：曾出现过的实体（含已终结的）不得新建条目，必须先查重并复用原条目
 - 别名与合并：实体改名时更新原条目（title 改新名、旧称呼写入 aliases），不得新建；发现当前生效条目中有指向同一实体的重复条目时，合并为一条（其余标题并入 aliases 后 remove）

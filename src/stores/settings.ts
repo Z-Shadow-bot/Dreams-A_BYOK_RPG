@@ -35,6 +35,7 @@ const MA_PERSONA_THRESHOLD_KEY = 'ma_persona_threshold'
 const MA_MEMORY_THRESHOLD_KEY = 'ma_memory_threshold'
 const MA_DISPATCH_MODE_KEY = 'ma_dispatch_mode'
 const MA_GOD_VIEW_KEY = 'ma_god_view'
+const LORE_MEMORY_THRESHOLD_KEY = 'lore_memory_threshold'
 const LORE_COMPRESS_THRESHOLD_KEY = 'lore_compress_threshold'
 const OPTION_COUNT_KEY = 'option_count'
 const FONT_SIZE_KEY = 'font_size'
@@ -85,6 +86,7 @@ export const useSettingsStore = defineStore('settings', {
     linkBudget: 2000, // 关联条目额外字符预算
     worldSettingMax: 3000, // 核心设定字数上限
     loreCompressThreshold: 1200, // 世界书单个条目超过该字符数时自动压缩（0 表示关闭）
+    loreMemoryThreshold: 2000, // 人物记忆 / 地点事件（及双字段条目的设定栏）超过该字符数时压缩
     // ===== 多智能体模式（默认值，可在「我的」中修改）=====
     maAutoAdvance: 1, // 每轮自动推进拍数（1 = 不自动推进，等玩家输入）
     maNarratorHeartbeat: 3, // 旁白心跳：连续多少拍未调用旁白则强制调用一次
@@ -223,6 +225,12 @@ export const useSettingsStore = defineStore('settings', {
         this.loreCompressThreshold = typeof lct === 'number' && isFinite(lct) && lct >= 0 ? Math.round(lct) : 1200
       } catch {
         this.loreCompressThreshold = 1200
+      }
+      try {
+        const lmt = await getSetting<number>(LORE_MEMORY_THRESHOLD_KEY)
+        this.loreMemoryThreshold = typeof lmt === 'number' && isFinite(lmt) && lmt >= 0 ? Math.round(lmt) : 2000
+      } catch {
+        this.loreMemoryThreshold = 2000
       }
       try {
         const v = await getSetting<number>(MA_AUTO_ADVANCE_KEY)
@@ -465,6 +473,11 @@ export const useSettingsStore = defineStore('settings', {
       const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 1200
       this.loreCompressThreshold = n
       try { await putSetting(LORE_COMPRESS_THRESHOLD_KEY, n) } catch { /* ignore */ }
+    },
+    async setLoreMemoryThreshold(v: number) {
+      const n = typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : 2000
+      this.loreMemoryThreshold = n
+      try { await putSetting(LORE_MEMORY_THRESHOLD_KEY, n) } catch { /* ignore */ }
     },
     async setMaAutoAdvance(v: number) {
       const n = typeof v === 'number' && isFinite(v) && v >= 1 && v <= 10 ? Math.round(v) : 1

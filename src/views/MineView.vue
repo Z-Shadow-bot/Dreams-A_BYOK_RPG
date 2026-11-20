@@ -258,6 +258,10 @@ function onLoreCompressThresholdInput(e: Event) {
   const n = Number((e.target as HTMLInputElement).value)
   if (Number.isFinite(n) && n >= 0) settings.setLoreCompressThreshold(Math.floor(n))
 }
+function onLoreMemoryThresholdInput(e: Event) {
+  const n = Number((e.target as HTMLInputElement).value)
+  if (Number.isFinite(n) && n >= 0) settings.setLoreMemoryThreshold(Math.floor(n))
+}
 
 // 显示设置
 function onFontSizeInput(e: Event) {
@@ -676,6 +680,25 @@ async function doClearLog() {
             />
           </div>
           <p class="setting-hint">单个世界书条目超过该字符数时，会自动发一次独立请求压缩（默认 1200；设为 0 关闭）</p>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-control">
+            <label class="field-label">人物记忆 / 地点事件阈值</label>
+            <input
+              type="number"
+              class="input"
+              min="0"
+              step="100"
+              placeholder="默认 2000"
+              :value="settings.loreMemoryThreshold"
+              @input="onLoreMemoryThresholdInput"
+            />
+          </div>
+          <p class="setting-hint">
+            人物的「记忆」、地点的「事件」以及它们的「设定」超过该字符数时压缩（默认 2000；设为 0 关闭）。
+            压缩时会把已经具备长期约束力的内容（结为朋友、结仇、立誓、定下规矩）提升进设定栏，而不是压进摘要。
+          </p>
         </div>
       </template>
     </section>

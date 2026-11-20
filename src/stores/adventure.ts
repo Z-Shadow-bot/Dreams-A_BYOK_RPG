@@ -22,9 +22,11 @@ import {
   compressLoreEntry,
 } from '@/ai/service'
 import { mergeLoreUpdates } from '@/utils/lore'
+import { parseSpecialCommands, addBanned, tickBanned, bannedPrompt, purgeInstruction, onceInstruction } from '@/utils/commands'
+import { compressDualEntries } from '@/ai/loreCompress'
 import { errorMessage } from '@/ai/client'
 import { createId } from '@/types'
-import type { SaveData, StoryPage, SavePoint, WorldState, PanelField, LoreEntry, PresetCharacter, MaState, AgentState, StoryMessage, MaTurnSnapshot } from '@/types'
+import type { SaveData, StoryPage, SavePoint, WorldState, PanelField, LoreEntry, PresetCharacter, MaState, AgentState, StoryMessage, MaTurnSnapshot, BannedEvent } from '@/types'
 import { useSettingsStore } from './settings'
 import { useWorldStore, normalizeImportedLorebook } from './world'
 import { useMaStore } from './multiagent'
@@ -141,6 +143,7 @@ export const useAdventureStore = defineStore('adventure', {
     },
     // 多智能体：本轮回退快照（每次提交前整体覆盖，重试时整体退回）
     pendingMaTurn: null as MaTurnSnapshot | null,
+    bannedEvents: [] as BannedEvent[], // 普通模式的「终止事件」禁令（倒计时）
     recoveryNote: null as string | null, // 截断自动降级时展示的提示文案
     loadingEndTime: 0, // 最近一次生成完成的毫秒时间戳（用于返回冒险页时判断是否需要滚动到顶部）
     npcSurpriseCounter: 0, // 距下一次"久未见 NPC 随机引入"还剩的回合数
@@ -199,6 +202,7 @@ export const useAdventureStore = defineStore('adventure', {
       // 注意必须显式置空：切换世界时若不加 else，会残留上一个世界的快照
       this.pendingRetry = state?.pendingRetry ?? null
       this.pendingMaTurn = state?.pendingMaTurn ?? null
+      this.bannedEvents = state?.bannedEvents ?? []
       // 恢复"久未见 NPC 随机引入"计数；无记录（或非正数）则随机 1-10
       this.npcSurpriseCounter = state?.npcSurpriseCounter && state.npcSurpriseCounter > 0
         ? state.npcSurpriseCounter
@@ -246,6 +250,7 @@ export const useAdventureStore = defineStore('adventure', {
         currentIndex: this.currentIndex,
         pendingRetry: this.pendingRetry ? clone(this.pendingRetry) : null,
         pendingMaTurn: this.pendingMaTurn ? clone(this.pendingMaTurn) : null,
+        bannedEvents: this.bannedEvents.length > 0 ? clone(this.bannedEvents) : undefined,
         npcSurpriseCounter: this.npcSurpriseCounter,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -374,6 +379,18 @@ export const useAdventureStore = defineStore('adventure', {
           this.currentIndex = this.totalPages - 1
         }
       }
+      // 特殊指令：本地剥离，不进入叙事文本；「终止事件」写入倒计时禁令，其余为一次性指示
+      const parsed = parseSpecialCommands(input)
+      const bans = parsed.commands.filter((c) => c.type === 'terminate').map((c) => c.arg).filter((x) => !!x)
+      const once = parsed.commands.filter((c) => c.type !== 'terminate')
+      this.bannedEvents = tickBanned(this.bannedEvents ?? [])
+      for (const b of bans) this.bannedEvents = addBanned(this.bannedEvents, b)
+      const effectiveInput = parsed.text || (parsed.commands.length > 0 ? '（我沉默片刻。）' : '')
+      if (!effectiveInput) return
+      const extraInstruction = [bannedPrompt(this.bannedEvents), purgeInstruction(bans), onceInstruction(once)]
+        .filter((x) => !!x)
+        .join('\n\n')
+
       this.lastInput = input
       this.lastMode = 'action'
       // 保存"本次行动前"的完整临时快照，供"回退重来"使用
@@ -394,12 +411,12 @@ export const useAdventureStore = defineStore('adventure', {
         const s = useSettingsStore()
         // 玩家改写同步：若最新一页被改写，不再单独发同步请求，
                // 而是在本轮行动指令前加改写提示，让 AI 一次性完成"校正存档/世界书 + 推进剧情"
-        let actionInput = input
+        let actionInput = effectiveInput
         const latestEdited = this.pages.length > 0 && this.pages[this.pages.length - 1].edited
           ? this.pages[this.pages.length - 1]
           : null
         if (latestEdited) {
-          actionInput = `【玩家已改写上一轮叙事，请以此改写版为准，先在 patchSave/loreUpdates 中校正存档与世界书，再推进剧情】\n${input}`
+          actionInput = `【玩家已改写上一轮叙事，请以此改写版为准，先在 patchSave/loreUpdates 中校正存档与世界书，再推进剧情】\n${effectiveInput}`
           // 清除改写标记，避免每轮重复
           const cleared = { ...latestEdited, edited: undefined }
           this.pages[this.pages.length - 1] = cleared
@@ -426,6 +443,7 @@ export const useAdventureStore = defineStore('adventure', {
             this.recoveryNote = '文本较长，正在优化生成方式，请稍候…'
           },
           unseenNpc,
+          extraInstruction,
         )
         if (this.worldId !== worldId) return
         result.options = await ensureOptions(result.options, result.narration, config, s.optionFallback)
@@ -508,6 +526,11 @@ export const useAdventureStore = defineStore('adventure', {
       this.pages[local] = page
       await putPage(page)
       void useWorldStore().touch(this.worldId ?? '')
+    },
+    // 手动解除某条「终止事件」禁令
+    async removeBanEvent(text: string) {
+      this.bannedEvents = (this.bannedEvents ?? []).filter((b) => b.text !== text)
+      await this.persistState()
     },
     // 多智能体：提交前捕获完整快照（每次覆盖旧快照），供「重试」整体退回
     async captureMaTurn(input?: string) {
@@ -724,18 +747,22 @@ export const useAdventureStore = defineStore('adventure', {
     },
     // 世界书条目超阈值自动压缩：只处理本轮被更新过的条目（独立 AI 请求、独立更新，不阻塞主流程）
     async compressTouchedLore(worldId: string, updates: LoreEntry[] | undefined) {
-      const threshold = useSettingsStore().loreCompressThreshold
-      if (!threshold || threshold <= 0 || !updates || updates.length === 0) return
+      if (!updates || updates.length === 0) return
       const touched = new Set(
         updates.filter((u) => !u.remove).map((u) => (u.title ?? '').trim()).filter(Boolean),
       )
       if (touched.size === 0) return
       const config = useSettingsStore().config
+      // 双字段条目（人物/地点）：记忆·事件压缩 + 长期影响提升进设定 + 设定栏压缩
+      await compressDualEntries(worldId, touched, config).catch(() => {})
+      if (useWorldStore().currentWorld?.id !== worldId) return
+      const threshold = useSettingsStore().loreCompressThreshold
+      if (!threshold || threshold <= 0) return
       const world = useWorldStore().currentWorld
       if (!world || world.id !== worldId) return
       const targets = (world.lorebook ?? [])
         // 人物条目走 persona/memory 分层压缩（P4 实现），此处先跳过，避免压缩空 content
-        .filter((e) => !e.fixed && !e.hidden && !e.isCharacter && touched.has((e.title ?? '').trim()) && (e.content ?? '').length > threshold)
+        .filter((e) => !e.fixed && !e.hidden && !e.isCharacter && !e.isLocation && touched.has((e.title ?? '').trim()) && (e.content ?? '').length > threshold)
         .slice(0, 2)
       for (const e of targets) {
         try {

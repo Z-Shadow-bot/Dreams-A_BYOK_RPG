@@ -10,6 +10,7 @@ import { downloadJSON, pickJSONFile, safeFilename, timestamp } from '@/utils/fil
 import { pickZipFile, parseDlcZip, persistDlcAudio, removeDlcAudio } from '@/dlc'
 import { clearBgmCache } from '@/audio/bgm'
 import { createId, NARRATOR_ID, PLAYER_ID } from '@/types'
+import AgentOptimizeModal from '@/components/AgentOptimizeModal.vue'
 import type { PanelField, World, LoreEntry } from '@/types'
 
 const worldStore = useWorldStore()
@@ -44,6 +45,8 @@ interface LoreEditRow {
   content: string
   persona: string
   memory: string
+  setting: string
+  event: string
   accessMode: 'public' | 'secret' | 'knownBy'
   accessWhoText: string
   required: boolean
@@ -199,16 +202,19 @@ function openEdit(w: World) {
   }
   editLorebook.value = (w.lorebook ?? []).map((e) => {
     const isChar = e.isCharacter === true
+    const isLoc = e.isLocation === true
     return {
       id: e.id,
       title: e.title ?? '',
       aliasesText: (e.aliases ?? []).join(', '),
       lastVisitedTimeText: e.lastVisitedTime ?? '',
       tagsText: (e.tags ?? []).join(', '),
-      // 人物条目：content 迁入 persona 后清空，避免两个输入框内容重复
-      content: isChar ? '' : (e.content ?? ''),
+      // 双字段条目：content 已迁入 persona/setting 后清空，避免两个输入框内容重复
+      content: isChar || isLoc ? '' : (e.content ?? ''),
       persona: isChar ? (e.persona ?? e.content ?? '') : '',
       memory: isChar ? (e.memory ?? '') : '',
+      setting: isLoc ? (e.setting ?? e.content ?? '') : '',
+      event: isLoc ? (e.event ?? '') : '',
       accessMode: e.access?.mode ?? 'public',
       accessWhoText: (e.access?.who ?? []).join(', '),
       required: !!e.required,
@@ -241,6 +247,7 @@ watch(showEdit, (v) => {
 // ===== 智能体面板 =====
 const editMultiAgent = ref(false)
 const expandedAgent = ref<string | null>(null)
+const optimizeTarget = ref<string | null>(null)
 const agentDraft = ref({ privatePersona: '', memory: '', memorySummary: '' })
 
 interface AgentRow {
@@ -365,7 +372,7 @@ function normalizeListText(v: string): string {
 }
 
 function addLoreEntry() {
-  editLorebook.value.push({ id: createId(), title: '', aliasesText: '', lastVisitedTimeText: '', tagsText: '', content: '', persona: '', memory: '', accessMode: 'public', accessWhoText: '', required: false, linksText: '' })
+  editLorebook.value.push({ id: createId(), title: '', aliasesText: '', lastVisitedTimeText: '', tagsText: '', content: '', persona: '', memory: '', setting: '', event: '', accessMode: 'public', accessWhoText: '', required: false, linksText: '' })
 }
 
 function removeLoreEntry(id: string) {
@@ -429,13 +436,20 @@ async function saveEdit() {
   const lorebook: LoreEntry[] = []
   for (const r of editLorebook.value) {
     const isChar = r.isCharacter === true
+    const isLoc = r.isLocation === true
     const persona = r.persona.trim()
     const memory = r.memory.trim()
-    // 非人物条目用 content；人物条目用 persona/memory，取消勾选「人物」时回退到 content 兜底
-    const content = isChar ? '' : (r.content.trim() || persona || memory)
+    const setting = r.setting.trim()
+    const event = r.event.trim()
+    // 双字段条目（人物/地点）用各自字段，取消勾选时回退到 content 兜底
+    const dual = isChar || isLoc
+    const content = dual ? '' : (r.content.trim() || persona || memory || setting || event)
     const finalPersona = isChar ? (persona || content) : ''
+    const finalSetting = isLoc ? (setting || content) : ''
     if (isChar) {
       if (!finalPersona && !memory) continue
+    } else if (isLoc) {
+      if (!finalSetting && !event) continue
     } else if (!content) {
       continue
     }
@@ -466,7 +480,9 @@ async function saveEdit() {
       content,
       persona: isChar ? (finalPersona || undefined) : undefined,
       memory: isChar ? (memory || undefined) : undefined,
-      migrated: isChar ? true : undefined,
+      setting: isLoc ? (finalSetting || undefined) : undefined,
+      event: isLoc ? (event || undefined) : undefined,
+      migrated: dual ? true : undefined,
       access,
       required: r.required,
       fixed: r.fixed === true ? true : undefined,
@@ -854,6 +870,12 @@ async function doImportDlc() {
                 <label class="field-label lore-sub-label">记忆（经历/承诺/状态，随剧情更新）</label>
                 <textarea v-model="entry.memory" class="textarea" rows="4" placeholder="这个人物记得什么：每条以时间开头，如「第3天：答应带你同行」" />
               </template>
+              <template v-else-if="entry.isLocation">
+                <label class="field-label lore-sub-label">设定（地理/氛围/规矩/势力，相对稳定）</label>
+                <textarea v-model="entry.setting" class="textarea" rows="4" placeholder="这里是什么地方：地形、气候、氛围、居民、规矩与禁忌" />
+                <label class="field-label lore-sub-label">事件（这里发生过什么，随剧情更新）</label>
+                <textarea v-model="entry.event" class="textarea" rows="4" placeholder="地点事件：每条以时间开头，如「第5天：旧城门失火，无人伤亡」" />
+              </template>
               <textarea v-else v-model="entry.content" class="textarea" rows="4" placeholder="条目详细设定内容" />
             </div>
             <p v-if="displayedLorebook.length === 0" class="muted-text">
@@ -878,6 +900,9 @@ async function doImportDlc() {
                   <span>独立智能体</span>
                 </label>
                 <span v-else class="agent-badge">系统</span>
+              </div>
+              <div v-if="row.assigned" class="agent-quick">
+                <button class="mini-btn" @click="optimizeTarget = row.charId">一键优化人设</button>
               </div>
               <p v-if="row.assigned" class="agent-meta">
                 记忆 {{ row.memoryLen }} 字{{ row.present ? ' · 在场' : '' }}
@@ -913,6 +938,7 @@ async function doImportDlc() {
           <p v-else class="muted-text">
             这个世界未开启多智能体模式。该模式需在创建世界时选择，创建后不可更改。
           </p>
+          <AgentOptimizeModal v-if="optimizeTarget" :char-id="optimizeTarget" @close="optimizeTarget = null" />
         </div>
 
       </div>
@@ -1444,5 +1470,18 @@ async function doImportDlc() {
 }
 .edit-panel {
   min-height: 200px;
+}
+
+.agent-quick {
+  margin-top: 6px;
+}
+.mini-btn {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 11px;
+  padding: 2px 10px;
+  cursor: pointer;
 }
 </style>

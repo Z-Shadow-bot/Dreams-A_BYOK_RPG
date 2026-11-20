@@ -21,9 +21,11 @@ import {
   compressAgentMemory,
   compressAgentPersona,
 } from '@/ai/agents'
-import { buildLoreInjection } from '@/ai/prompts'
+import { buildLoreInjection, buildMaNarratorRules, buildMaActorDetailRule } from '@/ai/prompts'
 import { normalizeLorebook } from '@/ai/service'
 import { mergeLoreUpdates } from '@/utils/lore'
+import { compressDualEntries } from '@/ai/loreCompress'
+import { parseSpecialCommands, addBanned, tickBanned, bannedPrompt, purgeInstruction, onceInstruction } from '@/utils/commands'
 import { errorMessage } from '@/ai/client'
 import { useWorldStore } from './world'
 import { useSettingsStore } from './settings'
@@ -97,6 +99,7 @@ export const useMaStore = defineStore('multiagent', {
     currentOptions: [] as string[],
     beatsDone: 0,
     beatsTotal: 0,
+    pendingOnce: '', // 本次提交的一次性指令指示（跳过/换场/回顾），用完即清
   }),
   getters: {
     isActive(state): boolean {
@@ -320,9 +323,18 @@ export const useMaStore = defineStore('multiagent', {
           )
           const lines = agent.memory.split('\n').map((l) => l.trim()).filter(Boolean)
           const kept = lines.slice(res.keepFrom).join('\n')
-          const summary = [agent.memorySummary, res.summary].filter((s) => !!s && s.trim()).join('\n')
+          // res.summary 已是合并后的完整摘要，直接替换（拼接会越滚越长）
+          const summary = res.summary.trim() || (agent.memorySummary ?? '')
+          // 长期影响提升进设定，避免"和某人成了朋友"被压进摘要后淡出
+          const persona = res.promote.trim()
+            ? [agent.privatePersona, res.promote.trim()].filter((x) => !!x).join('\n')
+            : agent.privatePersona
           if (kept.length < agent.memory.length) {
-            await this.safeWriteAgent(charId, baseRev, { memory: kept, memorySummary: summary })
+            await this.safeWriteAgent(charId, baseRev, {
+              memory: kept,
+              memorySummary: summary,
+              privatePersona: persona,
+            })
           }
         } catch (err) {
           console.warn('[ma] 记忆压缩失败（已忽略）', err)
@@ -630,6 +642,18 @@ export const useMaStore = defineStore('multiagent', {
           ],
           narrationMax: st.config.narrationMax ?? 500,
           combatStart: opts.combatStart === true,
+          extra:
+            [
+              buildMaNarratorRules(
+                { eventFrequency: st.eventFrequency, difficulty: st.difficulty, narrativeDetail: st.narrativeDetail },
+                st.narrativeSpeed,
+              ),
+              bannedPrompt(ma.bannedEvents),
+              purgeInstruction(ma.pendingPurge ?? []),
+              this.pendingOnce,
+            ]
+              .filter((x) => !!x)
+              .join('\n\n') || undefined,
         },
         st.config,
       )
@@ -649,6 +673,9 @@ export const useMaStore = defineStore('multiagent', {
       }
       if (res.sceneState) ma.sceneState = res.sceneState
       if (res.eventType) ma.eventType = res.eventType
+      // 清理请求已随本轮下发，无论模型是否全部照做都不再重复下发（避免每拍都带清理指令）
+      if ((ma.pendingPurge?.length ?? 0) > 0) ma.pendingPurge = []
+      this.pendingOnce = ''
       // 旁白是世界书更新的唯一写入者：合并 loreUpdates（含 access / revealTo）
       if (res.loreUpdates && res.loreUpdates.length > 0) {
         const updates = normalizeLorebook(res.loreUpdates)
@@ -657,6 +684,9 @@ export const useMaStore = defineStore('multiagent', {
           const merged = mergeLoreUpdates(book, updates)
           if (merged) {
             await useWorldStore().updateWorld(world.id, { lorebook: merged })
+            // 双字段条目的记忆/事件压缩（异步，不阻塞本拍）
+            const titles = new Set(updates.map((u) => (u.title ?? '').trim()).filter(Boolean))
+            void compressDualEntries(world.id, titles, st.config).catch(() => {})
           }
         }
       }
@@ -748,6 +778,10 @@ export const useMaStore = defineStore('multiagent', {
           lore: this.loreFor(charId, this.recentText(6, charId)),
           clockText: clockText(ma.clockDay, ma.clockMinute),
           offlineDays: offlineDays > 0 ? offlineDays : undefined,
+          extra:
+            [buildMaActorDetailRule(st.narrativeDetail), bannedPrompt(ma.bannedEvents)]
+              .filter((x) => !!x)
+              .join('\n\n') || undefined,
         },
         st.config,
       )
@@ -812,6 +846,10 @@ export const useMaStore = defineStore('multiagent', {
             lore: this.loreFor(PLAYER_ID, recent),
             clockText: clockText(ma.clockDay, ma.clockMinute),
             optionCount: st.optionCount || 3,
+            extra:
+              [buildMaActorDetailRule(st.narrativeDetail), bannedPrompt(ma.bannedEvents)]
+                .filter((x) => !!x)
+                .join('\n\n') || undefined,
           },
           st.config,
         )
@@ -937,11 +975,45 @@ export const useMaStore = defineStore('multiagent', {
       if (!ma) return
       this.pendingPlayer = false
       this.currentOptions = []
+      this.pendingOnce = ''
+
+      // 特殊指令：本地剥离；禁令先按回合递减，再加入本次新增
+      const parsed = parseSpecialCommands(input ?? '')
+      ma.bannedEvents = tickBanned(ma.bannedEvents ?? [])
+      let text = parsed.text
+      if (parsed.commands.length > 0) {
+        const bans = parsed.commands.filter((c) => c.type === 'terminate').map((c) => c.arg).filter(Boolean)
+        const once = parsed.commands.filter((c) => c.type !== 'terminate')
+        for (const b of bans) {
+          ma.bannedEvents = addBanned(ma.bannedEvents, b)
+          ma.pendingPurge = [...new Set([...(ma.pendingPurge ?? []), b])]
+        }
+        this.pendingOnce = onceInstruction(once)
+        await this.persistMa()
+        // 只有指令、没有正文：只让旁白做一次清理，不推进角色
+        if (!text) {
+          const world = useWorldStore().currentWorld
+          if (world && (bans.length > 0 || once.length > 0)) {
+            this.turnLoading = true
+            try {
+              await this.runNarrator(world)
+            } catch (e) {
+              this.error = errorMessage(e, useSettingsStore().devMode)
+            } finally {
+              this.pendingOnce = ''
+              this.turnLoading = false
+            }
+            return
+          }
+          return
+        }
+      }
+
       const total = Math.max(1, Math.min(10, ma.autoAdvance ?? useSettingsStore().maAutoAdvance))
       this.beatsTotal = total
       this.beatsDone = 0
 
-      let waiting = await this.beat(input)
+      let waiting = await this.beat(text || undefined)
       this.beatsDone = 1
       let left = total - 1
       let emptyStraight = 0
@@ -959,6 +1031,14 @@ export const useMaStore = defineStore('multiagent', {
         this.beatsDone = 0
         this.beatsTotal = 0
       }
+    },
+
+    // 手动解除某条「终止事件」禁令
+    async removeBanned(text: string) {
+      const ma = this.ma
+      if (!ma) return
+      ma.bannedEvents = (ma.bannedEvents ?? []).filter((b) => b.text !== text)
+      await this.persistMa()
     },
 
     async resetTurnState() {

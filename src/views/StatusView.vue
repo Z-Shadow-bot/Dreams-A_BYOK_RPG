@@ -3,16 +3,27 @@ import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useAdventureStore } from '@/stores/adventure'
 import { useWorldStore } from '@/stores/world'
 import { useSettingsStore } from '@/stores/settings'
+import { useMaStore } from '@/stores/multiagent'
+import AgentOptimizeModal from '@/components/AgentOptimizeModal.vue'
 import { playSceneBgm, playBgmByName, setBgmMuted, isBgmPlaying } from '@/audio/bgm'
+import { loreEntryDisplayText } from '@/utils/lore'
+import { NARRATOR_ID, PLAYER_ID } from '@/types'
 
 const adventure = useAdventureStore()
 const worldStore = useWorldStore()
 const settings = useSettingsStore()
 
-const tabs = ['面板', '背包', '技能', '地图', '人物', '设定', '经历', '概述'] as const
-type Tab = (typeof tabs)[number]
-const activeTab = ref<Tab>('面板')
+const baseTabs = ['面板', '背包', '技能', '地图', '人物'] as const
+const tailTabs = ['设定', '经历', '概述'] as const
+const tabs = computed<string[]>(() => {
+  const head: string[] = [...baseTabs]
+  if (isMultiAgent.value) head.push('智能体')
+  return [...head, ...tailTabs]
+})
+const activeTab = ref<string>('面板')
 
+const ma = useMaStore()
+const isMultiAgent = computed(() => worldStore.currentWorld?.multiAgent === true)
 const save = computed(() => adventure.currentSave)
 const schema = computed(() => worldStore.currentWorld?.panelSchema ?? [])
 
@@ -169,6 +180,8 @@ const loreEditName = ref('')
 const loreEditDesc = ref('')
 const loreEditPersona = ref('')
 const loreEditMemory = ref('')
+const loreEditSetting = ref('')
+const loreEditEvent = ref('')
 
 // 按编辑类型在 world.lorebook 中定位条目：location/character 按属性，lore 为任意非隐藏条目
 function findLoreEntry(type: 'location' | 'character' | 'lore', title: string) {
@@ -188,13 +201,18 @@ function startEditLore(type: 'location' | 'character' | 'lore', title: string) {
   if (!e) return
   editingLore.value = { type, title }
   loreEditName.value = e.title ?? ''
+  loreEditPersona.value = ''
+  loreEditMemory.value = ''
+  loreEditSetting.value = ''
+  loreEditEvent.value = ''
+  loreEditDesc.value = ''
   if (e.isCharacter) {
     loreEditPersona.value = e.persona ?? e.content ?? ''
     loreEditMemory.value = e.memory ?? ''
-    loreEditDesc.value = ''
+  } else if (e.isLocation) {
+    loreEditSetting.value = e.setting ?? e.content ?? ''
+    loreEditEvent.value = e.event ?? ''
   } else {
-    loreEditPersona.value = ''
-    loreEditMemory.value = ''
     loreEditDesc.value = e.content ?? ''
   }
 }
@@ -209,6 +227,12 @@ function saveEditLore() {
       // 人物条目：设定与记忆分开保存；content 清空（已迁入 persona，避免注入时重复）
       e.persona = loreEditPersona.value
       e.memory = loreEditMemory.value
+      e.content = ''
+      e.migrated = true
+    } else if (e.isLocation) {
+      // 地点条目：设定与事件分开保存
+      e.setting = loreEditSetting.value
+      e.event = loreEditEvent.value
       e.content = ''
       e.migrated = true
     } else {
@@ -316,6 +340,82 @@ async function toggleDetailedBag(e: Event) {
   await settings.setDetailedBag(checked)
 }
 
+// ===== 智能体（多智能体世界）=====
+const expandedAgent = ref<string | null>(null)
+const agentEditPersona = ref('')
+const agentEditMemory = ref('')
+const optimizeTarget = ref<string | null>(null)
+
+const agentRows = computed(() => {
+  if (!isMultiAgent.value) return []
+  return ma.agents.map((a) => ({
+    charId: a.charId,
+    name: a.name,
+    role: a.charId === NARRATOR_ID ? '旁白' : a.charId === PLAYER_ID ? '玩家角色' : 'NPC',
+    isSystem: a.charId === NARRATOR_ID || a.charId === PLAYER_ID,
+    persona: a.privatePersona,
+    memory: a.memory,
+    summary: a.memorySummary ?? '',
+    stance: a.stance ?? '',
+    memoryLen: a.memory.length,
+  }))
+})
+
+function toggleAgent(charId: string) {
+  if (expandedAgent.value === charId) {
+    expandedAgent.value = null
+    return
+  }
+  const a = ma.agentOf(charId)
+  expandedAgent.value = charId
+  agentEditPersona.value = a?.privatePersona ?? ''
+  agentEditMemory.value = a?.memory ?? ''
+}
+
+async function saveAgentEdit() {
+  const id = expandedAgent.value
+  if (!id) return
+  await ma.updateAgent(id, { privatePersona: agentEditPersona.value, memory: agentEditMemory.value })
+}
+
+async function unassignAgent(charId: string, name: string) {
+  if (!window.confirm(`取消「${name}」的独立智能体？它的私有设定与记忆会被删除，且无法恢复。`)) return
+  await ma.unassign(charId)
+  if (expandedAgent.value === charId) expandedAgent.value = null
+}
+
+function findCharId(name: string): string | undefined {
+  return (worldStore.currentWorld?.lorebook ?? []).find((e) => e.isCharacter && (e.title ?? '').trim() === name)?.id
+}
+function isAgentChar(name: string): boolean {
+  const id = findCharId(name)
+  return !!id && ma.agents.some((a) => a.charId === id)
+}
+async function toggleCharAgent(name: string, e: Event) {
+  const input = e.target as HTMLInputElement
+  const id = findCharId(name)
+  if (!id) return
+  if (input.checked) {
+    const entry = (worldStore.currentWorld?.lorebook ?? []).find((x) => x.id === id)
+    if (entry) await ma.assign(entry)
+  } else {
+    if (!window.confirm(`取消「${name}」的独立智能体？它的私有设定与记忆会被删除。`)) {
+      input.checked = true
+      return
+    }
+    await ma.unassign(id)
+  }
+}
+
+// 进入状态页时确保多智能体状态已加载（刷新后直接打开本页的情况）
+watch(
+  () => [worldStore.currentWorldId, isMultiAgent.value] as const,
+  async ([id, isMa]) => {
+    if (id && isMa) await ma.open(id)
+  },
+  { immediate: true },
+)
+
 // 世界书概览
 const loreKeyword = ref('')
 const loreOrder = ref<'asc' | 'desc'>('asc')
@@ -323,9 +423,7 @@ const loreOverview = computed(() => {
   const world = worldStore.currentWorld
   if (!world?.lorebook?.length) return []
   return world.lorebook.filter((e) => !e.hidden).map((e) => {
-    const persona = (e.persona ?? e.content ?? '').trim()
-    const memory = (e.memory ?? '').trim()
-    const text = e.isCharacter && memory ? `${persona}\n【记忆】\n${memory}` : persona
+    const text = loreEntryDisplayText(e)
     return {
       id: e.id,
       title: e.title ?? '（无标题）',
@@ -334,6 +432,7 @@ const loreOverview = computed(() => {
       fixed: !!e.fixed,
       content: text,
       isCharacter: e.isCharacter === true,
+      isLocation: e.isLocation === true,
     }
   })
 })
@@ -370,7 +469,7 @@ const mapList = computed(() => {
     return loreLocations
       .map((e) => ({
         name: e.title ?? '（无标题）',
-        description: e.content,
+        description: loreEntryDisplayText(e),
         active: active.includes((e.title ?? '').trim()),
       }))
       .sort((a, b) => {
@@ -567,7 +666,10 @@ const characterList = computed(() => {
             </div>
             <template v-if="editingLore && editingLore.type === 'location' && editingLore.title === loc.name">
               <input v-model="loreEditName" class="status-edit-input" placeholder="名称" />
-              <textarea v-model="loreEditDesc" class="status-edit-textarea" rows="4" placeholder="描述" />
+              <label class="edit-sub-label">设定（地理/氛围/规矩/势力）</label>
+              <textarea v-model="loreEditSetting" class="status-edit-textarea" rows="4" placeholder="这里是什么地方" />
+              <label class="edit-sub-label">事件（这里发生过什么）</label>
+              <textarea v-model="loreEditEvent" class="status-edit-textarea" rows="4" placeholder="地点事件（每条以时间开头）" />
               <div class="edit-actions">
                 <button class="status-edit-btn save" @click="saveEditLore">完成</button>
                 <button class="status-edit-btn cancel" @click="cancelEditLore">取消</button>
@@ -588,6 +690,10 @@ const characterList = computed(() => {
             <div class="card-head">
               <span class="card-name">{{ c.name }}</span>
               <span v-if="c.active" class="badge">当前</span>
+              <label v-if="isMultiAgent" class="agent-toggle" @dblclick.stop>
+                <input type="checkbox" :checked="isAgentChar(c.name)" @change="toggleCharAgent(c.name, $event)" />
+                <span>智能体</span>
+              </label>
             </div>
             <template v-if="editingLore && editingLore.type === 'character' && editingLore.title === c.name">
               <input v-model="loreEditName" class="status-edit-input" placeholder="名称" />
@@ -605,6 +711,62 @@ const characterList = computed(() => {
               <p v-if="c.memory" class="card-memory">记忆：{{ c.memory.split('\n').filter(Boolean).slice(-2).join(' / ') }}</p>
             </template>
           </div>
+        </div>
+
+        <!-- 智能体（仅多智能体世界） -->
+        <div v-else-if="activeTab === '智能体'" class="list">
+          <label class="edit-toggle-row">
+            <input type="checkbox" v-model="editMode" />
+            <span>允许改写（开启后可直接编辑设定与记忆）</span>
+          </label>
+          <p v-if="agentRows.length === 0" class="muted">（尚未分配任何智能体）</p>
+          <p v-else class="muted agent-count">
+            共 {{ agentRows.length }} 个：旁白、玩家角色，以及已分配的人物。
+          </p>
+          <div v-for="a in agentRows" :key="a.charId" class="agent-card">
+            <div class="agent-head">
+              <span class="agent-name">{{ a.name }}</span>
+              <span class="agent-role">{{ a.role }}</span>
+            </div>
+            <div class="agent-btns">
+              <button v-if="!a.isSystem" class="mini-btn danger" @click="unassignAgent(a.charId, a.name)">
+                取消智能体
+              </button>
+              <button class="mini-btn" @click="optimizeTarget = a.charId">一键优化人设</button>
+              <button class="mini-btn" @click="toggleAgent(a.charId)">
+                {{ expandedAgent === a.charId ? '收起' : '具体内容' }}
+              </button>
+            </div>
+            <template v-if="expandedAgent === a.charId">
+              <p class="agent-meta">
+                记忆 {{ a.memoryLen }} 字<span v-if="a.stance"> · {{ a.stance }}</span>
+              </p>
+              <template v-if="editMode">
+                <label class="edit-sub-label">设定</label>
+                <textarea v-model="agentEditPersona" class="status-edit-textarea" rows="5" placeholder="这个角色是谁、怎么说话、在意什么" />
+                <label class="edit-sub-label">记忆</label>
+                <textarea v-model="agentEditMemory" class="status-edit-textarea" rows="6" placeholder="每条以时间开头" />
+                <div class="edit-actions">
+                  <button class="status-edit-btn save" @click="saveAgentEdit">完成</button>
+                </div>
+              </template>
+              <template v-else>
+                <p class="agent-sub">设定</p>
+                <pre class="agent-pre">{{ a.persona || '（无设定）' }}</pre>
+                <template v-if="a.summary">
+                  <p class="agent-sub">更早记忆摘要</p>
+                  <pre class="agent-pre">{{ a.summary }}</pre>
+                </template>
+                <p class="agent-sub">记忆</p>
+                <pre class="agent-pre">{{ a.memory || '（暂无记忆）' }}</pre>
+              </template>
+            </template>
+          </div>
+          <AgentOptimizeModal
+            v-if="optimizeTarget"
+            :char-id="optimizeTarget"
+            @close="optimizeTarget = null"
+          />
         </div>
 
         <!-- 角色设定 -->
@@ -1201,5 +1363,72 @@ const characterList = computed(() => {
   margin-bottom: 6px;
   line-height: 1.6;
   font-size: 14px;
+}
+
+.agent-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.agent-count {
+  font-size: 12px;
+}
+.agent-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.agent-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.agent-name {
+  font-size: 14px;
+}
+.agent-role {
+  font-size: 11px;
+  color: var(--muted);
+}
+.agent-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.mini-btn {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 11px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.mini-btn.danger {
+  color: #e08a8a;
+  border-color: rgba(200, 120, 120, 0.4);
+}
+.agent-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.agent-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.agent-pre {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-top: 4px;
+  font-family: inherit;
+  color: var(--text);
 }
 </style>

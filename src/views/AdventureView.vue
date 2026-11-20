@@ -28,6 +28,7 @@ const enhanceSummarize = ref(true) // 总结优化已有设定
 const enhanceExpand = ref(true) // 补充更多合理设定
 
 const adventureSettingsOpen = ref(false) // 冒险设置折叠栏
+const commandsOpen = ref(false) // 特殊指令折叠栏
 // ===== 多智能体（仅 World.multiAgent === true 时生效）=====
 const ma = useMaStore()
 const isMultiAgent = computed(() => worldStore.currentWorld?.multiAgent === true)
@@ -75,6 +76,15 @@ async function applyMaSavePatch() {
   await ma.patchMa({ pendingSavePatch: null })
   await adventure.applyExternalSavePatch(p)
 }
+// 特殊指令：当前生效的禁令（多智能体存 maState，普通模式存 WorldState）
+const activeBans = computed(() =>
+  isMultiAgent.value ? (ma.ma?.bannedEvents ?? []) : (adventure.bannedEvents ?? []),
+)
+function removeBan(text: string) {
+  if (isMultiAgent.value) void ma.removeBanned(text)
+  else void adventure.removeBanEvent(text)
+}
+
 // 把当前场景值同步给多智能体（用于世界书精确匹配）
 function syncSceneValue() {
   const w = worldStore.currentWorld
@@ -663,6 +673,29 @@ async function rollback() {
                 标出你的角色不知情的消息，并显示旁白的伏笔清单。仅供复盘与排查，不影响剧情推进。
               </div>
             </template>
+            <div class="commands-help">
+              <button class="settings-toggle" @click="commandsOpen = !commandsOpen">
+                <span>特殊指令</span>
+                <span class="settings-arrow">{{ commandsOpen ? '▾' : '▸' }}</span>
+              </button>
+              <template v-if="commandsOpen">
+                <p class="setting-hint">在输入框里写指令，可与其他文字混用；指令本身不会进入剧情。</p>
+                <ul class="cmd-list">
+                  <li><code>（指令：终止事件，旧城门的火灾）</code>不再提及该事件并清理相关记录（10 回合）</li>
+                  <li><code>（指令：跳过，打斗过程）</code>用一句话带过，不展开</li>
+                  <li><code>（指令：换场，第二天清晨的城门口）</code>直接跳到下一个场景</li>
+                  <li><code>（指令：回顾，与铁匠的约定）</code>先简要回顾已知信息</li>
+                </ul>
+                <p class="setting-hint">括号与冒号全角/半角均可；只有带「指令：」前缀才会生效。</p>
+                <div v-if="activeBans.length" class="ban-list">
+                  <p class="ban-title">生效中的禁令</p>
+                  <div v-for="b in activeBans" :key="b.text" class="ban-item">
+                    <span>{{ b.text }}（剩 {{ b.roundsLeft }} 回合）</span>
+                    <button class="ban-remove" @click="removeBan(b.text)">解除</button>
+                  </div>
+                </div>
+              </template>
+            </div>
           </template>
         </div>
         <button
@@ -886,6 +919,41 @@ async function rollback() {
 .ma-waiting {
   font-size: 12px;
   color: #c9a227;
+}
+.cmd-list {
+  margin: 6px 0 4px;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+.cmd-list code {
+  color: #c9a227;
+  font-size: 12px;
+}
+.ban-list {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.ban-title {
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.ban-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.ban-remove {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
 }
 .ma-blind {
   margin-left: 6px;

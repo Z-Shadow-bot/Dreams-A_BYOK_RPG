@@ -1,15 +1,41 @@
 import type { LoreEntry } from '@/types'
 
+// ===== 双字段条目（人物 / 地点）=====
+// 人物：persona（设定）+ memory（记忆）
+// 地点：setting（设定）+ event（事件，类似地点的记忆）
+// 两类共用同一套迁移 / 注入 / 增量合并逻辑，仅字段名不同。
+
+export function isDualEntry(e: LoreEntry): boolean {
+  return e.isCharacter === true || e.isLocation === true
+}
+
+// 双字段条目的"设定"正文（旧数据回退到 content）
+export function loreSettingText(e: LoreEntry): string {
+  if (e.isLocation) return (e.setting ?? e.content ?? '').trim()
+  return (e.persona ?? e.content ?? '').trim()
+}
+
+// 双字段条目的"第二字段"正文（人物的记忆 / 地点的事件）
+export function loreEventText(e: LoreEntry): string {
+  if (e.isLocation) return (e.event ?? '').trim()
+  return (e.memory ?? '').trim()
+}
+
+export function loreSecondLabel(e: LoreEntry): string {
+  return e.isLocation ? '事件' : '记忆'
+}
+
 // ===== 旧档迁移 =====
 
-// 人物条目若只有 content（设定+记忆混合），整体迁入 persona，content 保留作只读备份。
-// 幂等：已有 persona 的条目直接返回原对象（引用不变，便于调用方判断是否发生迁移）。
+// 双字段条目若只有 content（设定与历史混在一起），整体迁入设定字段，content 保留作只读备份。
+// 幂等：已有设定字段的条目直接返回原对象（引用不变，便于调用方判断是否发生迁移）。
 export function migrateLoreEntry(e: LoreEntry): LoreEntry {
-  if (!e.isCharacter) return e
-  if (e.persona !== undefined) return e.migrated ? e : { ...e, migrated: true }
+  if (!isDualEntry(e)) return e
+  const hasSetting = e.isLocation ? e.setting !== undefined : e.persona !== undefined
+  if (hasSetting) return e.migrated ? e : { ...e, migrated: true }
   const content = (e.content ?? '').trim()
   if (!content) return e
-  return { ...e, persona: content, migrated: true }
+  return e.isLocation ? { ...e, setting: content, migrated: true } : { ...e, persona: content, migrated: true }
 }
 
 // 批量迁移世界书；无变化时返回原数组引用，调用方可据此判断是否需要回写
@@ -26,15 +52,18 @@ export function migrateLorebook(list?: LoreEntry[] | null): LoreEntry[] | undefi
 
 // ===== 展示文本 =====
 
-// 人物条目的可注入正文（设定 + 记忆）。与 ai/prompts.ts 的 loreEntryText 保持一致，
-// 供非提示词场景（UI 预览、字数统计）复用。
+// 双字段条目的可注入正文（设定 + 记忆/事件）
 export function loreEntryDisplayText(e: LoreEntry): string {
-  if (!e.isCharacter) return (e.content ?? '').trim()
-  const persona = (e.persona ?? e.content ?? '').trim()
-  const memory = (e.memory ?? '').trim()
-  if (!persona && !memory) return ''
-  if (!memory) return persona
-  return persona ? `${persona}\n【记忆】\n${memory}` : `【记忆】\n${memory}`
+  if (!isDualEntry(e)) return (e.content ?? '').trim()
+  const setting = loreSettingText(e)
+  const second = loreEventText(e)
+  const summary = (e.summary ?? '').trim()
+  const label = loreSecondLabel(e)
+  const parts: string[] = []
+  if (setting) parts.push(setting)
+  if (summary) parts.push(`【${label}·摘要】\n${summary}`)
+  if (second) parts.push(`【${label}】\n${second}`)
+  return parts.join('\n')
 }
 
 // ===== 内容级增量 =====
@@ -123,9 +152,19 @@ function loreMatches(b: LoreEntry, title: string, aliases: string[]): boolean {
   return incoming.some((k) => targets.includes(k))
 }
 
-// 人物条目双字段合并：persona 与 memory 各自独立增量。
-// 兼容旧提示词：未提供 persona 字段时，把 content 视为 persona 的全量替换。
-function personaPatch(old: LoreEntry, u: LoreEntry): { persona: string; memory?: string; migrated: boolean } {
+// 双字段条目增量合并：设定与第二字段各自独立。
+// 兼容旧提示词：未提供设定字段时，把 content 视为设定的全量替换。
+function dualPatch(
+  old: LoreEntry,
+  u: LoreEntry,
+): { persona?: string; memory?: string; setting?: string; event?: string; migrated: boolean } {
+  if (old.isLocation === true || u.isLocation === true) {
+    const settingBase = old.setting ?? old.content ?? ''
+    const settingFull = u.setting ?? (u.content ? u.content : undefined)
+    const setting = applyLoreFieldDelta(settingBase, settingFull, u.settingAppend, u.settingRemoveLines)
+    const event = applyLoreFieldDelta(old.event ?? '', u.event, u.eventAppend, u.eventRemoveLines)
+    return { setting, event: event || undefined, migrated: true }
+  }
   const personaBase = old.persona ?? old.content ?? ''
   const personaFull = u.persona ?? (u.content ? u.content : undefined)
   const persona = applyLoreFieldDelta(personaBase, personaFull, u.personaAppend, u.personaRemoveLines)
@@ -165,7 +204,7 @@ export function mergeLoreUpdates(book: LoreEntry[], updates: LoreEntry[] | undef
         if (u.hidden === false) next[idx] = { ...old, hidden: undefined }
         continue
       }
-      const isCharacter = old.isCharacter === true || u.isCharacter === true
+      const isDual = isDualEntry(old) || isDualEntry(u)
       const newTitle = title || old.title
       const mergedAliases = new Set<string>()
       for (const a of old.aliases ?? []) mergedAliases.add(a)
@@ -182,7 +221,7 @@ export function mergeLoreUpdates(book: LoreEntry[], updates: LoreEntry[] | undef
         title: newTitle,
         aliases: mergedAliases.size > 0 ? [...mergedAliases] : undefined,
         tags: u.tags.length > 0 ? u.tags : old.tags,
-        ...(isCharacter ? personaPatch(old, u) : { content: applyLoreContentDelta(old.content, u) }),
+        ...(isDual ? dualPatch(old, u) : { content: applyLoreContentDelta(old.content, u) }),
         required: u.required !== undefined ? u.required : old.required,
         fixed: u.fixed !== undefined ? u.fixed : old.fixed,
         links: u.links !== undefined ? u.links : old.links,
@@ -196,26 +235,26 @@ export function mergeLoreUpdates(book: LoreEntry[], updates: LoreEntry[] | undef
       continue
     }
 
-    // 新条目
-    if (u.isCharacter === true) {
-      const p = (u.persona || u.content || '').trim()
-      const m = (u.memory || u.memoryAppend || '').trim()
-      if (!p && !m) continue
+    // 新条目：人物与地点都走双字段
+    if (isDualEntry(u)) {
+      const isLoc = u.isLocation === true
+      const a = (isLoc ? u.setting || u.content : u.persona || u.content) ?? ''
+      const b = (isLoc ? u.event || u.eventAppend : u.memory || u.memoryAppend) ?? ''
+      if (!a.trim() && !b.trim()) continue
       next.push({
         id: u.id,
         title: u.title,
         aliases: aliases.length > 0 ? aliases : undefined,
         tags: u.tags,
         content: '',
-        persona: p,
-        memory: m || undefined,
+        ...(isLoc ? { setting: a.trim(), event: b.trim() || undefined } : { persona: a.trim(), memory: b.trim() || undefined }),
         migrated: true,
         required: u.required,
         fixed: u.fixed,
         links: u.links,
         hidden: u.hidden,
         isLocation: u.isLocation,
-        isCharacter: true,
+        isCharacter: u.isCharacter,
         lastVisitedTime: u.lastVisitedTime,
         access: u.access,
       })

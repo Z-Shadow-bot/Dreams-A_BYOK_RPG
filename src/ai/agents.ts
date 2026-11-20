@@ -44,7 +44,8 @@ const SPEECH_FORMAT = `【台词格式】
 - 动作与台词可以任意穿插，不要"先写一整段动作，再写一整段台词"。
 - 正确示例：（推门进来，抖了抖伞上的水）这么大的雨。（把伞靠到墙角，回头看你）说吧，找我什么事？
 - 台词中需要用引号表示引用或转述时，可以正常使用双引号。
-- 允许只写动作不写台词（当此时不说话更合理时），但必须有可观察的行为，不能写成"（沉默）"敷衍了事。`
+- 允许只写动作不写台词（当此时不说话更合理时），但必须有可观察的行为，不能写成"（沉默）"敷衍了事。
+- 始终用第一人称。不要用第三人称描述自己，不要写别人的内心，不要描写你不在场的地方。`
 
 // ===== 导演：决定下一个发言者、修正在场者、判定战斗起止，不写剧情 =====
 export interface DirectorInput {
@@ -153,6 +154,7 @@ export interface NpcInput {
   lore: string
   clockText: string
   offlineDays?: number
+  extra?: string // 附加指示（禁令等）
 }
 
 export interface NpcResult {
@@ -174,6 +176,9 @@ const NPC_SYSTEM = `你正在扮演故事中的一个角色。你不是助手，
 5. 记忆更新只记"你亲历或亲眼所见"的事，一条一行，以时间开头（如"第3天·傍晚：他答应帮我找弟弟"）。不要重复已有记忆。
 6. 若旧记忆已不成立（人死了、约定作废），用 memoryRemove 给出该行的关键词删除。
 7. stance 更新为你此刻的状态（一句话：你在做什么、在意什么、心情如何）。不要写"对某人的态度"，只写你自己的状态。
+8. 你只演你自己：第一人称说话与行动；不替别人发言，不描写别人的心理，不解释"我为什么这样说"。
+9. 像真人说话：可以有停顿、口头禅、答非所问、说到一半改口、被情绪打断；不要总结、不要升华、不要把心理活动写成解说（"我很生气"不如拍下桌子、冷笑一声或干脆不说话）。
+10. 情绪有起伏，也可以不想说话：不耐烦、走神、被别的事分心都合理，不必每次都精准回应对方。
 
 ${SPEECH_FORMAT}
 
@@ -219,7 +224,7 @@ ${input.recent || '（暂无）'}
 【你知道的设定】
 ${input.lore || '（无）'}
 
-【当前时间】${input.clockText}${offline}`
+【当前时间】${input.clockText}${offline}${input.extra ? `\n\n${input.extra}` : ''}`
 
   const data = await askJson(NPC_SYSTEM, user, config)
   return {
@@ -245,6 +250,7 @@ export interface PlayerInput {
   lore: string
   clockText: string
   optionCount: number
+  extra?: string
 }
 
 export interface PlayerResult {
@@ -261,6 +267,7 @@ const PLAYER_SYSTEM = `你在扮演故事中的一个角色（由玩家操控）
 3. 每个选项是独立的一次完整反应，彼此倾向上要有区别（例如：直接追问 / 试探周旋 / 沉默观察或转身就走）。
 4. 不要替玩家决定态度，也不要把选项写成三个相似的句子。
 5. 选项内容会被直接当作这个角色的发言，所以要符合人物设定与记忆。
+6. 三句都要像真人会说的话：可以口语、可以短、可以带情绪或没说完；不要书面语排比，不要总结陈词，不要像在写小说。
 
 ${SPEECH_FORMAT}
 
@@ -292,7 +299,7 @@ ${input.recent || '（暂无）'}
 【你知道的设定】
 ${input.lore || '（无）'}
 
-【当前时间】${input.clockText}
+【当前时间】${input.clockText}${input.extra ? `\n\n${input.extra}` : ''}
 
 请生成 ${input.optionCount} 个不同倾向的选项。`
 
@@ -318,6 +325,7 @@ export interface NarratorInput {
   presence: Array<{ id: string; name: string }>
   narrationMax: number
   combatStart: boolean
+  extra?: string // 附加指示（禁令 / 清理 / 一次性指令）
 }
 
 export interface NarratorResult {
@@ -400,7 +408,7 @@ ${secretText}
 ${expiredText}
 
 【当前在场的角色】
-${input.presence.map((p) => `${p.name}（${p.id}）`).join('、') || '（无）'}`
+${input.presence.map((p) => `${p.name}（${p.id}）`).join('、') || '（无）'}${input.extra ? `\n\n${input.extra}` : ''}`
 
   const data = await askJson(NARRATOR_SYSTEM, user, config)
   const secretUpdates: Array<{ id: string; status: 'fired' | 'expired' }> = Array.isArray(data.secretUpdates)
@@ -530,6 +538,7 @@ ${recent}
 // ===== 记忆压缩：保留近期原文，更早内容转摘要 =====
 export interface MemoryCompressResult {
   summary: string
+  promote: string // 已具备长期约束力、应提升进"设定"的内容（可为空）
   keepFrom: number // 从第几条记忆起保留原文（0-based）
 }
 
@@ -549,10 +558,11 @@ export async function compressAgentMemory(
 2. 近期的记忆保留原文（不要改写），由 keepFrom 指定从第几条开始保留（0-based，行号见 user）。
 3. 摘要 200 字以内，按时间顺序，不分段。
 4. 不得编造，不得遗漏未完成的承诺。
+5. **提升**：有些记忆已经具备长期约束力（成为朋友/结仇、立誓、残疾、定下规矩、身份暴露），这类内容不要压进摘要，而是写进 promote，由系统并入"设定"栏。promote 用陈述句、不带日期、不与现有设定重复；没有就留空字符串。
 
 ${JSON_RULE}
 
-{ "summary": "更早记忆的摘要", "keepFrom": 6 }`
+{ "summary": "更早记忆的摘要", "promote": "与铁匠阿岩结为生死之交，欠他一条命", "keepFrom": 6 }`
   const numbered = lines.map((l, i) => `[${i}] ${l}`).join('\n')
   const user = `【世界】${worldName}
 【角色】${name}
@@ -567,7 +577,7 @@ ${numbered}
 请输出合并后的摘要，以及从第几行开始保留原文。`
   const data = await askJson(system, user, config)
   const keepFrom = Math.max(0, Math.min(lines.length, intOr(data.keepFrom, Math.floor(lines.length * 0.6))))
-  return { summary: str(data.summary), keepFrom }
+  return { summary: str(data.summary), promote: str(data.promote), keepFrom }
 }
 
 // 设定压缩（保守：只去冗余，不删事实）
@@ -591,4 +601,135 @@ ${JSON_RULE}
   const data = await askJson(system, `【世界】${worldName}\n【角色】${name}\n\n【设定原文】\n${persona}`, config)
   const out = str(data.persona)
   return out || persona
+}
+
+// ===== 一键优化人设：把单薄的设定重写得更丰满、更像一个活人 =====
+export interface OptimizePersonaInput {
+  worldName: string
+  name: string
+  currentPersona: string
+  memory: string
+  stance: string
+  relatedLore: string
+}
+
+const OPTIMIZE_SYSTEM = `你在为一个故事角色重写"人设"。目标是让扮演这个角色的 AI 能演出一个活人，而不是一个功能性的 NPC。
+
+要求：
+1. 保留原文所有既定事实，不得与其矛盾，不得新增与世界观冲突的内容。
+2. 重点是"可演"的细节：
+   - 说话方式：句子长短、口头禅、称呼别人的习惯、什么时候会沉默
+   - 行为习惯：紧张时做什么、说谎时有什么小动作、对什么特别敏感
+   - 立场与矛盾：表面想要什么、真正在意什么、不愿承认的是什么
+   - 关系：与已登场的人具体怎么相处（不是"关系复杂"，而是"欠他一条命但从不提"）
+   - 边界：绝对不会做什么、绝不会说什么
+3. 用【栏目】分段，简洁具体，不写形容词堆砌，不写"性格复杂""内心矛盾"这类空话。
+4. 长度 400-800 字。第三人称陈述（"他/她"），不要写成台词。
+5. 只输出人设本身，不要解释你做了什么。
+
+${JSON_RULE}
+
+{ "persona": "【身份】……\\n【说话方式】……\\n【习惯】……\\n【在意什么】……\\n【关系】……\\n【边界】……" }`
+
+export async function optimizeAgentPersona(input: OptimizePersonaInput, config: APIConfig): Promise<string> {
+  const user = `【世界】${input.worldName}
+【角色】${input.name}
+
+【现有设定】
+${input.currentPersona || '（几乎是空的，需要你从零建立）'}
+
+【相关记忆】
+${input.memory || '（无）'}
+
+【此刻状态】${input.stance || '（无）'}
+
+【相关的世界书内容】
+${input.relatedLore || '（无）'}
+
+请重写这个角色的人设。`
+  const data = await askJson(OPTIMIZE_SYSTEM, user, config)
+  return str(data.persona)
+}
+
+// ===== 双字段条目（人物记忆 / 地点事件）压缩：摘要 + 提升 + 保留点 =====
+export interface DualCompressInput {
+  worldName: string
+  name: string
+  kind: 'character' | 'location'
+  setting: string
+  summary: string
+  second: string
+  threshold: number
+}
+
+export interface DualCompressResult {
+  summary: string
+  promote: string
+  keepFrom: number
+}
+
+const DUAL_COMPRESS_SYSTEM = `你在整理一个故事条目的"第二条字段"：人物的「记忆」或地点的「事件」。
+它随着剧情不断追加，现在太长了，需要压缩。
+
+要求：
+1. 把较早的内容合并成摘要（200 字以内），按时间顺序，不分段；保留影响后续判断的信息（恩怨、承诺、债务、伤病、目标、地点变化）。
+2. **提升**：有些内容已经具备长期约束力（成为朋友/结仇、立誓、残疾、定下规矩、身份暴露、地形永久改变），不要压进摘要，而是写进 promote，由系统并入「设定」栏。
+   - promote 用陈述句、不带日期（如"与铁匠阿岩结为生死之交"）
+   - 不与现有设定重复；没有就留空字符串
+3. 近期内容保留原文（不要改写），由 keepFrom 指定从第几条开始保留（0-based，行号见 user）。
+4. 不得编造，不得遗漏未完成的承诺。
+
+${JSON_RULE}
+
+{ "summary": "更早内容的摘要", "promote": "应提升进设定的长期影响", "keepFrom": 8 }`
+
+export async function compressDualEntry(input: DualCompressInput, config: APIConfig): Promise<DualCompressResult> {
+  const lines = input.second.split('\n').map((l) => l.trim()).filter(Boolean)
+  const label = input.kind === 'location' ? '事件' : '记忆'
+  const user = `【世界】${input.worldName}
+【条目】${input.name}（${input.kind === 'location' ? '地点' : '人物'}）
+【第二字段】${label}
+
+【当前设定】（用于判断哪些内容已经或应该成为设定，避免重复）
+${input.setting || '（无）'}
+
+【已有摘要】
+${input.summary || '（无）'}
+
+【${label}原文（带行号，共 ${lines.length} 条，${input.second.length} 字，阈值 ${input.threshold}）】
+${lines.map((l, i) => `[${i}] ${l}`).join('\n')}
+
+请输出压缩后的摘要、需要提升进设定的内容，以及从第几行开始保留原文。`
+  const data = await askJson(DUAL_COMPRESS_SYSTEM, user, config)
+  const keepFrom = Math.max(0, Math.min(lines.length, intOr(data.keepFrom, Math.floor(lines.length * 0.6))))
+  return { summary: str(data.summary), promote: str(data.promote), keepFrom }
+}
+
+// 设定栏压缩：只合并重复表述，不得删事实
+export async function compressSetting(
+  worldName: string,
+  name: string,
+  kind: 'character' | 'location',
+  setting: string,
+  config: APIConfig,
+): Promise<string> {
+  const system = `你在精简一个故事条目的「设定」文本（当前偏长）。
+
+要求：
+1. 只合并重复表述、删除修辞与空话，保留全部事实。
+2. 不得删除或改变：身份/外貌/性格/能力/关系/立场/规矩/禁忌/数值，全部原样保留。
+3. 不得新增内容，不得改变任何事实的含义。
+4. 保持原有的分行或【栏目】结构。
+
+${JSON_RULE}
+
+{ "setting": "精简后的设定" }`
+  const label = kind === 'location' ? '地点' : '人物'
+  const user = `【世界】${worldName}
+【${label}】${name}
+
+【设定原文】
+${setting}`
+  const data = await askJson(system, user, config)
+  return str(data.setting) || setting
 }

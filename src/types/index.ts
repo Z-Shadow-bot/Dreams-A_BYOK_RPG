@@ -1,3 +1,7 @@
+import type { BannedEvent } from '@/utils/commands'
+
+export type { BannedEvent }
+
 // ===== 角色面板字段定义（创建世界时由 AI 生成） =====
 export interface PanelField {
   key: string // 字段标识（英文 key，用于存档存取）
@@ -89,6 +93,8 @@ export interface MaState {
   autoAdvance?: number // 本世界的自动推进拍数设置（缺省用全局默认）
   heartbeatInterval?: number // 本世界的旁白心跳间隔设置（缺省用全局默认）
   pendingSavePatch?: Record<string, unknown> | null // 旁白产生的存档变更，由视图层应用后清空
+  bannedEvents?: BannedEvent[] // 「终止事件」禁令（倒计时制，每拍 -1，归零失效）
+  pendingPurge?: string[] // 待旁白清理的事件（清理后从队列移除）
   createdAt: number
   updatedAt: number
 }
@@ -159,9 +165,12 @@ export interface LoreEntry {
   tags: string[] // 标签（场景/地点/人物/主题等），用于按需命中
   content: string // 条目正文（详细设定）；人物条目迁移后保留为旧版只读备份，不参与注入
   // ===== 人物条目专用双字段（仅 isCharacter 使用）=====
-  persona?: string // 设定：身份/性格/关系基础/能力等相对稳定的部分（公开）
-  memory?: string // 记忆：经历/承诺/状态变化等随剧情演进的部分
-  migrated?: boolean // 已把旧 content 迁入 persona（content 保留作只读备份）
+  persona?: string // 【人物】设定：身份/性格/关系基础/能力等相对稳定的部分（公开）
+  memory?: string // 【人物】记忆：经历/承诺/状态变化等随剧情演进的部分
+  setting?: string // 【地点】设定：地理、氛围、规矩、势力等相对稳定的部分
+  event?: string // 【地点】事件：这里发生过什么（类似地点的记忆）
+  summary?: string // 双字段条目：更早记忆/事件的压缩摘要（压缩时把重要内容提升进设定栏）
+  migrated?: boolean // 已把旧 content 迁入 persona/setting（content 保留作只读备份）
   // ===== 多智能体可见性（缺省 public；普通模式不生效）=====
   access?: LoreAccess
   revealTo?: string[] // 仅 loreUpdates 输出：把该条目的可见性揭示给这些 charId（不持久化）
@@ -180,6 +189,11 @@ export interface LoreEntry {
   // ===== 人物条目双字段增量（仅用于 loreUpdates 输出，不持久化）=====
   personaAppend?: string // 追加到 persona 末尾
   personaRemoveLines?: string[] // 从 persona 删除包含这些子串的行
+  // ===== 地点条目双字段增量（仅用于 loreUpdates 输出，不持久化）=====
+  settingAppend?: string // 追加到 setting 末尾
+  settingRemoveLines?: string[] // 从 setting 删除包含这些子串的行
+  eventAppend?: string // 追加到 event 末尾
+  eventRemoveLines?: string[] // 从 event 删除包含这些子串的行
   memoryAppend?: string // 追加到 memory 末尾（多条用换行分隔）
   memoryRemoveLines?: string[] // 从 memory 删除包含这些子串的行
 }
@@ -264,6 +278,8 @@ export interface WorldState {
   } | null
   // 多智能体：本轮回退快照（每次提交前整体覆盖，重试时整体退回）
   pendingMaTurn?: MaTurnSnapshot | null
+  // 普通模式：「终止事件」禁令（倒计时制，每回合 -1，归零失效）
+  bannedEvents?: BannedEvent[]
   npcSurpriseCounter?: number // 距下一次"久未见 NPC 随机引入"还剩的回合数（1-10 随机重置）
   createdAt: number
   updatedAt: number

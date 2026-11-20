@@ -247,6 +247,13 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
   const memoryAppend = asString(e.memoryAppend).trim()
   const personaRemoveLines = normalizeLineList(e.personaRemoveLines)
   const memoryRemoveLines = normalizeLineList(e.memoryRemoveLines)
+  // 地点条目双字段（全量或增量）
+  const setting = asString(e.setting).trim()
+  const event = asString(e.event).trim()
+  const settingAppend = asString(e.settingAppend).trim()
+  const eventAppend = asString(e.eventAppend).trim()
+  const settingRemoveLines = normalizeLineList(e.settingRemoveLines)
+  const eventRemoveLines = normalizeLineList(e.eventRemoveLines)
   // 多智能体可见性（仅多智能体模式生效；普通模式忽略）
   const accessRaw = e.access as Record<string, unknown> | undefined
   const mode = accessRaw && typeof accessRaw === 'object' ? accessRaw.mode : undefined
@@ -264,12 +271,17 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
     !!appendContent ||
     !!personaAppend ||
     !!memoryAppend ||
+    !!settingAppend ||
+    !!eventAppend ||
     (removeLines ? removeLines.length > 0 : false) ||
     (personaRemoveLines ? personaRemoveLines.length > 0 : false) ||
-    (memoryRemoveLines ? memoryRemoveLines.length > 0 : false)
-  // 纯内容增量更新：允许无 content，但必须有 title（用于匹配已有条目）；新增条目则必须有 content
-  if (!content && !persona && !memory && !hasDelta && !access && !revealTo) return null
-  if (!content && !persona && !memory && !title) return null
+    (memoryRemoveLines ? memoryRemoveLines.length > 0 : false) ||
+    (settingRemoveLines ? settingRemoveLines.length > 0 : false) ||
+    (eventRemoveLines ? eventRemoveLines.length > 0 : false)
+  const hasBody = !!content || !!persona || !!memory || !!setting || !!event
+  // 纯内容增量更新：允许无 content，但必须有 title（用于匹配已有条目）；新增条目则必须有正文
+  if (!hasBody && !hasDelta && !access && !revealTo) return null
+  if (!hasBody && !title) return null
   const tags = asStringArray(e.tags).map((t) => t.trim()).filter((t) => !!t)
   const aliases = asStringArray(e.aliases).map((t) => t.trim()).filter((t) => !!t)
   return {
@@ -280,6 +292,8 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
     content,
     persona: persona || undefined,
     memory: memory || undefined,
+    setting: setting || undefined,
+    event: event || undefined,
     access,
     revealTo: revealTo || undefined,
     required: asTriBool(e.required),
@@ -298,6 +312,10 @@ function normalizeLoreEntry(v: unknown): LoreEntry | null {
     personaRemoveLines,
     memoryAppend: memoryAppend || undefined,
     memoryRemoveLines,
+    settingAppend: settingAppend || undefined,
+    settingRemoveLines,
+    eventAppend: eventAppend || undefined,
+    eventRemoveLines,
   }
 }
 
@@ -390,6 +408,7 @@ export async function generateAction(
   narrativeSpeed: NarrativeSpeed = 'normal',
   onRecoverStart?: () => void,
   unseenNpc?: LoreEntry,
+  extraInstruction?: string,
 ): Promise<AIResponse> {
   const { min, max } = narrationRange(config)
   const system = buildActionSystemPrompt(min, max, world, detailedBag, true)
@@ -401,7 +420,9 @@ export async function generateAction(
         { role: 'system', content: system },
         {
           role: 'user',
-          content: buildActionPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules, getLoreCfg(), unseenNpc),
+          content: [buildActionPrompt(world, currentSave, userInput, lastNarration, narrativeSpeed, rules, getLoreCfg(), unseenNpc), extraInstruction]
+            .filter((x) => !!x && String(x).trim())
+            .join('\n\n'),
         },
       ],
       config,
