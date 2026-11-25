@@ -19,6 +19,9 @@ const loading = ref(false)
 const error = ref('')
 const draft = ref('')
 const generated = ref('') // AI 原始生成结果，便于改了之后一键退回
+// 该角色"应当知道的世界书条目标题"白名单：可手动增删，采用时写回 AgentState.knownLore
+const knownLore = ref<string[]>([])
+const worldTitles = computed(() => (worldStore.currentWorld?.lorebook ?? []).map((e) => (e.title ?? '').trim()).filter(Boolean))
 
 async function run() {
   const world = worldStore.currentWorld
@@ -28,7 +31,7 @@ async function run() {
   error.value = ''
   try {
     const entry = (world.lorebook ?? []).find((e) => e.id === props.charId)
-    draft.value = await optimizeAgentPersona(
+    const rel = await optimizeAgentPersona(
       {
         worldName: world.name,
         name: a.name,
@@ -36,10 +39,13 @@ async function run() {
         memory: a.memory,
         stance: a.stance ?? '',
         relatedLore: entry ? loreEntryText(entry, props.charId) : '',
+        allLoreTitles: worldTitles.value,
       },
-      settings.config,
+      { ...settings.config, webSearch: true },
     )
-    generated.value = draft.value
+    draft.value = rel.persona
+    generated.value = rel.persona
+    knownLore.value = rel.knownLore
   } catch (e) {
     error.value = errorMessage(e, settings.devMode)
   } finally {
@@ -47,9 +53,20 @@ async function run() {
   }
 }
 
+function toggleLore(title: string) {
+  if (knownLore.value.includes(title)) {
+    knownLore.value = knownLore.value.filter((t) => t !== title)
+  } else {
+    knownLore.value = [...knownLore.value, title]
+  }
+}
+
 async function apply() {
   if (!draft.value.trim()) return
-  await ma.updateAgent(props.charId, { privatePersona: draft.value.trim() })
+  await ma.updateAgent(props.charId, {
+    privatePersona: draft.value.trim(),
+    ...(knownLore.value.length ? { knownLore: knownLore.value } : {}),
+  })
   emit('applied')
   emit('close')
 }
@@ -62,8 +79,8 @@ onMounted(run)
     <div class="ao-card">
       <h3 class="ao-title">优化人设 · {{ agent?.name ?? '' }}</h3>
       <p class="ao-hint">
-        会根据现有设定与记忆重写一份更“可演”的人设（说话方式、习惯、在意的东西、边界）。
-        右侧可以直接修改，改完点“采用这份”；确认后才会替换，随时可以取消。
+        会根据现有设定与记忆重写一份更“可演”的人设（说话方式、习惯、在意的东西、边界），
+        同时建议这个角色天生/日常就该知道的世界书条目。右侧可以直接修改，改完点“采用这份”；确认后才会替换，随时可以取消。
       </p>
       <div v-if="error" class="ao-error">⚠ {{ error }}</div>
       <div class="ao-compare">
@@ -76,6 +93,20 @@ onMounted(run)
           <textarea v-model="draft" class="ao-text" rows="12" placeholder="等待生成…" />
         </div>
       </div>
+
+      <!-- 该角色应当知道的世界书条目 -->
+      <div class="ao-lore">
+        <p class="ao-label">这个角色应当知道的世界书条目（可增删，勾上才会让 AI 注入给他）</p>
+        <div v-if="loading" class="ao-hint muted">随人设一起生成建议…</div>
+        <div v-else-if="worldTitles.length === 0" class="ao-hint muted">（本世界暂无世界书条目）</div>
+        <div v-else class="ao-lore-list">
+          <label v-for="t in worldTitles" :key="t" class="ao-lore-item">
+            <input type="checkbox" :checked="knownLore.includes(t)" @change="toggleLore(t)" />
+            <span>{{ t }}</span>
+          </label>
+        </div>
+      </div>
+
       <div class="ao-actions">
         <button
           v-if="generated && draft !== generated"
@@ -111,7 +142,7 @@ onMounted(run)
   border-radius: 12px;
   padding: 16px;
   width: 100%;
-  max-width: 760px;
+  max-width: 780px;
   max-height: 90vh;
   overflow-y: auto;
 }
@@ -125,6 +156,7 @@ onMounted(run)
   line-height: 1.6;
   margin-bottom: 10px;
 }
+.ao-hint.muted { color: var(--muted, #999); }
 .ao-error {
   color: #e08a8a;
   font-size: 12px;
@@ -154,6 +186,32 @@ onMounted(run)
   padding: 8px;
   resize: vertical;
 }
+.ao-lore {
+  margin-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 10px;
+}
+.ao-lore-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.ao-lore-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.ao-lore-item input { flex: none; }
 .ao-actions {
   display: flex;
   justify-content: flex-end;

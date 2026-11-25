@@ -168,6 +168,7 @@ export const useWorldStore = defineStore('world', {
         presetCharacters?: PresetCharacter[]
         characterFallback?: string
       },
+      multiAgent = false,
     ): Promise<World> {
       const now = Date.now()
       const world: World = {
@@ -189,6 +190,7 @@ export const useWorldStore = defineStore('world', {
         presetCharacters: dlc.presetCharacters,
         characterFallback: dlc.characterFallback,
         dlcLoreTitles: (dlc.lorebook ?? []).map((e) => (e.title ?? '').trim()).filter((t) => !!t),
+        ...(multiAgent ? { multiAgent: true } : {}),
       }
       await putWorld(world)
       this.worlds.unshift(world)
@@ -261,6 +263,18 @@ export const useWorldStore = defineStore('world', {
     w.characterFallback = updated.characterFallback
     w.loreLimit = updated.loreLimit
     w.updatedAt = updated.updatedAt
+    },
+    // 锁定世界冒险模式（普通/多智能体）。模式在「开始冒险」时首次确定，落盘到 World.multiAgent
+    async setWorldMode(id: string, multiAgent: boolean) {
+      const w = this.worlds.find((x) => x.id === id)
+      if (!w) return
+      const updated: World = {
+        ...w,
+        ...(multiAgent ? { multiAgent: true } : { multiAgent: undefined }),
+        updatedAt: Date.now(),
+      }
+      await putWorld(updated)
+      w.multiAgent = updated.multiAgent
     },
     // 基于世界的原始快照（旧世界无快照时用当前值）复制生成新世界，用于尝试多条冒险路线
     async duplicateWorld(id: string): Promise<World | null> {

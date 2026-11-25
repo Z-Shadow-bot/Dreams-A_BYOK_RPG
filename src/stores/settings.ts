@@ -51,6 +51,7 @@ const DEFAULT_CONFIG: APIConfig = {
   narrationMin: 200,
   narrationMax: 500,
   deepThink: false,
+  webSearch: false,
 }
 
 export type Difficulty = 'easy' | 'normal' | 'hard' | 'nightmare'
@@ -342,6 +343,7 @@ export const useSettingsStore = defineStore('settings', {
         narrationMin: p.narrationMin ?? 200,
         narrationMax: p.narrationMax ?? 500,
         deepThink: p.deepThink ?? false,
+        webSearch: p.webSearch ?? false,
       })
       const key = await getProfileKey(id)
       if (key) {

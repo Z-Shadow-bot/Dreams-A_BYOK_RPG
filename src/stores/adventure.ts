@@ -698,6 +698,9 @@ export const useAdventureStore = defineStore('adventure', {
         await useMaStore().clearAll()
         if (this.worldId !== worldId) return
       }
+      // 解锁模式：重新开始后回到"未锁定"状态，玩家可在开局面板重选普通/多智能体
+      await useWorldStore().setWorldMode(worldId, false)
+      if (this.worldId !== worldId) return
       clearPendingRequest()
       this.currentSave = null
       this.pages = []

@@ -611,6 +611,12 @@ export interface OptimizePersonaInput {
   memory: string
   stance: string
   relatedLore: string
+  allLoreTitles: string[] // 全部世界书条目标题，供建议"该角色应知道哪些"
+}
+
+export interface OptimizePersonaResult {
+  persona: string
+  knownLore: string[] // 该角色应当知道的世界书条目标题白名单
 }
 
 const OPTIMIZE_SYSTEM = `你在为一个故事角色重写"人设"。目标是让扮演这个角色的 AI 能演出一个活人，而不是一个功能性的 NPC。
@@ -626,12 +632,13 @@ const OPTIMIZE_SYSTEM = `你在为一个故事角色重写"人设"。目标是�
 3. 用【栏目】分段，简洁具体，不写形容词堆砌，不写"性格复杂""内心矛盾"这类空话。
 4. 长度 400-800 字。第三人称陈述（"他/她"），不要写成台词。
 5. 只输出人设本身，不要解释你做了什么。
+6. 另外给出一份 knownLore：这个角色"本来就该知道"的世界书条目标题清单。只挑与他身份、经历、所在圈子直接相关、他天生或经由日常就能知道的条目（自己的身世、家族、隶属组织、家乡、常见地点、公开传闻等）；秘密、他不可能知道的幕后信息一律不要放进去。没有就返回空数组。
 
 ${JSON_RULE}
 
-{ "persona": "【身份】……\\n【说话方式】……\\n【习惯】……\\n【在意什么】……\\n【关系】……\\n【边界】……" }`
+{ "persona": "【身份】……\\n【说话方式】……\\n【习惯】……\\n【在意什么】……\\n【关系】……\\n【边界】……", "knownLore": ["条目标题1", "条目标题2"] }`
 
-export async function optimizeAgentPersona(input: OptimizePersonaInput, config: APIConfig): Promise<string> {
+export async function optimizeAgentPersona(input: OptimizePersonaInput, config: APIConfig): Promise<OptimizePersonaResult> {
   const user = `【世界】${input.worldName}
 【角色】${input.name}
 
@@ -646,9 +653,12 @@ ${input.memory || '（无）'}
 【相关的世界书内容】
 ${input.relatedLore || '（无）'}
 
-请重写这个角色的人设。`
+【世界书全部条目标题】（供 knownLore 从中选择，只能选这里出现的标题）
+${input.allLoreTitles.length ? input.allLoreTitles.map((t) => `- ${t}`).join('\n') : '（无）'}
+
+请重写这个角色的人设，并给出他应当知道的世界书条目标题清单。`
   const data = await askJson(OPTIMIZE_SYSTEM, user, config)
-  return str(data.persona)
+  return { persona: str(data.persona), knownLore: strList(data.knownLore).slice(0, 30) }
 }
 
 // ===== 双字段条目（人物记忆 / 地点事件）压缩：摘要 + 提升 + 保留点 =====

@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useAdventureStore } from '@/stores/adventure'
 import { useWorldStore } from '@/stores/world'
 import { useSettingsStore } from '@/stores/settings'
 import { downloadJSON, downloadText, pickJSONFile, safeFilename, timestamp } from '@/utils/file'
 import type { SavePoint } from '@/types'
+import { NARRATOR_ID, CROWD_ID } from '@/types'
+import { listMessages } from '@/db'
 
 const adventure = useAdventureStore()
 const worldStore = useWorldStore()
 const settings = useSettingsStore()
+const isMultiWorld = computed(() => worldStore.currentWorld?.multiAgent === true)
 const name = ref('')
 const confirmId = ref<string | null>(null)
 const confirmRestart = ref(false)
@@ -152,6 +155,51 @@ function formatTime(t: number): string {
 async function exportNovel() {
   importError.value = ''
   opError.value = ''
+  const worldName = worldStore.currentWorld?.name ?? '冒险记录'
+  const isMulti = worldStore.currentWorld?.multiAgent === true
+
+  // 多智能体：以消息流为准（pages 仅开局一条，无用）
+  if (isMulti) {
+    const wid = worldStore.currentWorldId
+    if (!wid) {
+      opError.value = '当前没有可导出的故事内容'
+      return
+    }
+    const msgs = await listMessages(wid)
+    if (msgs.length === 0) {
+      opError.value = '当前没有可导出的故事内容'
+      return
+    }
+    const lines: string[] = [worldName, '（多智能体模式 · 按消息流导出）', '']
+    let lastDay: number | undefined
+    for (const m of msgs) {
+      const day = m.meta?.day
+      if (day !== undefined && day !== lastDay) {
+        lines.push(`【第 ${day} 天】`)
+        lastDay = day
+      }
+      let pre = ''
+      if (m.speakerId === NARRATOR_ID) pre = '（旁白）'
+      else if (m.speakerId === CROWD_ID) pre = `（${m.speakerName}）`
+      else pre = m.speakerName
+      const body = m.text.trim()
+      if (!body) continue
+      if (m.speakerId === NARRATOR_ID) lines.push(body, '')
+      else lines.push(`　${pre}：${body}`, '')
+    }
+    lines.push('', `—— 完 · 共 ${msgs.length} 则消息 ——`)
+    novelExporting.value = true
+    try {
+      await downloadText(`${safeFilename(worldName)}_小说_${timestamp()}.txt`, lines.join('\n'))
+    } catch (e) {
+      opError.value = e instanceof Error ? e.message : String(e)
+    } finally {
+      novelExporting.value = false
+    }
+    return
+  }
+
+  // 单智能体：按 pages 导出
   // 注意：内存只保留页面窗口，这里从数据库读取全部页
   const allPages = await adventure.getAllPages()
   if (allPages.length === 0) {
@@ -167,7 +215,6 @@ async function exportNovel() {
   }
   const first = Math.max(1, Math.min(from, total))
   const last = Math.max(first, Math.min(to, total))
-  const worldName = worldStore.currentWorld?.name ?? '冒险记录'
   const lines: string[] = [`${worldName}`, `（节选自冒险记录 · 第 ${first}-${last} 页）`, '']
   for (let i = first - 1; i <= last - 1; i++) {
     const p = allPages[i]
@@ -230,23 +277,25 @@ async function exportNovel() {
       <button class="io-btn novel" :disabled="novelExporting" @click="exportNovel">
         {{ novelExporting ? '导出中…' : '导出为小说' }}
       </button>
-      <input
-        v-model.number="novelFrom"
-        type="number"
-        min="1"
-        :max="adventure.totalPages"
-        class="page-input"
-        @input="novelFromEdited = true"
-      />
-      <span class="range-sep">~</span>
-      <input
-        v-model.number="novelTo"
-        type="number"
-        min="1"
-        :max="adventure.totalPages"
-        class="page-input"
-        @input="novelToEdited = true"
-      />
+      <template v-if="!isMultiWorld">
+        <input
+          v-model.number="novelFrom"
+          type="number"
+          min="1"
+          :max="adventure.totalPages"
+          class="page-input"
+          @input="novelFromEdited = true"
+        />
+        <span class="range-sep">~</span>
+        <input
+          v-model.number="novelTo"
+          type="number"
+          min="1"
+          :max="adventure.totalPages"
+          class="page-input"
+          @input="novelToEdited = true"
+        />
+      </template>
     </div>
 
     <label v-if="adventure.hasAdventure" class="auto-save-row">

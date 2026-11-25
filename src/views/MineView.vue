@@ -23,6 +23,7 @@ const form = reactive({
   narrationMin: 200,
   narrationMax: 500,
   deepThink: false,
+  webSearch: false,
 })
 
 const isWideTemp = computed(
@@ -198,6 +199,7 @@ async function saveAsProfile() {
       narrationMin,
       narrationMax,
       deepThink: form.deepThink,
+      webSearch: form.webSearch,
     },
     apiKey.value,
   )
@@ -293,6 +295,7 @@ onMounted(async () => {
   form.narrationMin = settings.config.narrationMin ?? 200
   form.narrationMax = settings.config.narrationMax ?? 500
   form.deepThink = settings.config.deepThink ?? false
+  form.webSearch = settings.config.webSearch ?? false
   devMode.value = settings.devMode
 
   // PWA 端：申请持久化存储并展示用量，降低浏览器自动清理丢失存档的概率
@@ -364,6 +367,7 @@ async function save() {
       narrationMin,
       narrationMax,
       deepThink: form.deepThink,
+      webSearch: form.webSearch,
     })
     if (apiKey.value.trim()) {
       await settings.setApiKey(apiKey.value.trim())
@@ -519,6 +523,15 @@ async function doClearLog() {
         <p class="setting-hint standalone">
           开启后根据模型名称自动追加思考/推理参数（支持 DeepSeek、通义千问、GLM、GPT、Gemini）；默认关闭。
           注意：GPT / Gemini 的思考模式需要选用支持推理的模型，否则可能报错。
+        </p>
+
+        <label class="dev-row deep-think-row">
+          <input type="checkbox" v-model="form.webSearch" />
+          <span>联网搜索</span>
+        </label>
+        <p class="setting-hint standalone">
+          开启后，在「生成世界 / 完善设定 / 写世界书 / 设计事件」等一次性创作时，让模型尝试先联网检索相关资料以丰富补充设定，
+          方便撰写二创或基于现实题材的世界观。取决于所用模型/服务是否支持服务端联网检索；默认关闭。
         </p>
 
         <p v-if="error" class="error">{{ error }}</p>

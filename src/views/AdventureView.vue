@@ -11,6 +11,7 @@ import { useWorldStore } from '@/stores/world'
 import { useSettingsStore } from '@/stores/settings'
 import { useMaStore, clockText } from '@/stores/multiagent'
 import { PLAYER_ID, NARRATOR_ID } from '@/types'
+import MaGuideModal from '@/components/MaGuideModal.vue'
 import { playSceneBgm, playBgmByName, stopBgm, setBgmMuted } from '@/audio/bgm'
 
 const adventure = useAdventureStore()
@@ -32,6 +33,24 @@ const commandsOpen = ref(false) // 特殊指令折叠栏
 // ===== 多智能体（仅 World.multiAgent === true 时生效）=====
 const ma = useMaStore()
 const isMultiAgent = computed(() => worldStore.currentWorld?.multiAgent === true)
+// 开局面板里的模式选择：世界未锁定模式时用本次选择锁定（默认跟随世界当前设定）
+const modeChoice = ref<'normal' | 'multi'>(isMultiAgent.value ? 'multi' : 'normal')
+watch(
+  () => worldStore.currentWorldId,
+  () => {
+    modeChoice.value = worldStore.currentWorld?.multiAgent === true ? 'multi' : 'normal'
+  },
+)
+// 玩法说明弹窗：每个多智能体世界「开始冒险」时弹一次（localStorage 本地记忆，不写入剧情/上下文）
+const showMaGuide = ref(false)
+const maGuideKey = () => `dreams_ma_guide_seen_${worldStore.currentWorldId ?? ''}`
+function maTryShowGuide() {
+  if (!isMultiAgent.value) return
+  const key = maGuideKey()
+  if (!key || localStorage.getItem(key)) return
+  localStorage.setItem(key, '1')
+  showMaGuide.value = true
+}
 const maAutoAdvance = computed(() => ma.ma?.autoAdvance ?? settings.maAutoAdvance)
 const maHeartbeat = computed(() => ma.ma?.heartbeatInterval ?? settings.maNarratorHeartbeat)
 // 多智能体模式用消息流判断"是否已开始"，普通模式用页历史
@@ -342,12 +361,19 @@ async function begin() {
     adventure.error = '请先在「我的」页面完成 API 配置'
     return
   }
+  const wid = worldStore.currentWorldId
+  const world = worldStore.currentWorld
+  // 首次开局：锁定所选模式到世界（已锁定的世界沿用当前模式不变）
+  if (wid && world && world.multiAgent === undefined) {
+    await worldStore.setWorldMode(wid, modeChoice.value === 'multi')
+  }
+  const isMulti = worldStore.currentWorld?.multiAgent === true
   const opts = {
     summarize: enhanceSummarize.value,
     expand: enhanceExpand.value,
   }
-  if (isMultiAgent.value) {
-    const wid = worldStore.currentWorldId
+  if (isMulti) {
+    maTryShowGuide()
     if (wid) await ma.open(wid)
     await adventure.startAdventure(startInput.value.trim(), opts, hiddenPreset.value)
     const page = adventure.currentPage
@@ -448,6 +474,21 @@ async function rollback() {
           <option v-for="c in presetCharacters" :key="c.label" :value="c.label">{{ c.label }}</option>
         </select>
       </label>
+      <div class="mode-row">
+        <template v-if="isMultiAgent">
+          <span class="mode-check no-toggle">冒险模式：多智能体</span>
+        </template>
+        <template v-else>
+          <label class="mode-check">
+            <input type="radio" value="normal" v-model="modeChoice" />
+            <span>普通模式</span>
+          </label>
+          <label class="mode-check">
+            <input type="radio" value="multi" v-model="modeChoice" />
+            <span>多智能体模式</span>
+          </label>
+        </template>
+      </div>
       <label class="checkbox-row">
         <input type="checkbox" v-model="enhanceSummarize" />
         <span>总结优化已有设定</span>
@@ -735,6 +776,9 @@ async function rollback() {
       <button class="retry-btn" @click="adventure.retry()">重试</button>
     </div>
 
+    <!-- 多智能体玩法说明（只在开始时弹一次，非剧情内容） -->
+    <MaGuideModal v-if="showMaGuide" @close="showMaGuide = false" />
+
   </div>
 </template>
 
@@ -820,6 +864,26 @@ async function rollback() {
 }
 .start-btn:disabled {
   opacity: 0.4;
+}
+.mode-row {
+  display: flex;
+  gap: 16px;
+  margin: 12px 0 4px;
+  font-size: 13px;
+}
+.mode-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mode-check.no-toggle {
+  color: var(--muted);
+  cursor: default;
+}
+.mode-check input {
+  accent-color: var(--yellow);
 }
 .checkbox-row {
   display: flex;

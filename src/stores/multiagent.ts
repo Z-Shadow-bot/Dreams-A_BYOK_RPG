@@ -225,7 +225,7 @@ export const useMaStore = defineStore('multiagent', {
     },
 
     // 玩家手动编辑（设定/记忆/在场等）：rev++ 使在途的异步写回失效
-    async updateAgent(charId: string, patch: Partial<Pick<AgentState, 'name' | 'privatePersona' | 'memory' | 'memorySummary' | 'present' | 'lastSeenDay' | 'stance'>>) {
+    async updateAgent(charId: string, patch: Partial<Pick<AgentState, 'name' | 'privatePersona' | 'memory' | 'memorySummary' | 'present' | 'lastSeenDay' | 'stance' | 'knownLore'>>) {
       const worldId = this.worldId
       if (!worldId) return
       const idx = this.agents.findIndex((a) => a.charId === charId)
@@ -400,6 +400,8 @@ export const useMaStore = defineStore('multiagent', {
       const world = useWorldStore().currentWorld
       if (!world) return ''
       const st = useSettingsStore()
+      // 该角色的"应当知道的世界书条目标题"白名单（优化人设时配置）
+      const knownLore = this.agents.find((a) => a.charId === viewerCharId)?.knownLore
       // 旁白需要看到全部秘密，给它更大的预算与条数；角色按常规预算
       const isNarrator = viewerCharId === NARRATOR_ID
       const budget = isNarrator ? Math.round(st.loreBudget * 1.5) : st.loreBudget
@@ -411,6 +413,7 @@ export const useMaStore = defineStore('multiagent', {
         this.activeNames(),
         { loreLimit: limit, loreBudget: budget, linkBudget: st.linkBudget },
         viewerCharId,
+        knownLore,
       )
     },
 

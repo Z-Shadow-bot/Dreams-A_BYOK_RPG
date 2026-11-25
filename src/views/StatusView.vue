@@ -344,6 +344,7 @@ async function toggleDetailedBag(e: Event) {
 const expandedAgent = ref<string | null>(null)
 const agentEditPersona = ref('')
 const agentEditMemory = ref('')
+const knownLoreEdit = ref<string[]>([])
 const optimizeTarget = ref<string | null>(null)
 
 const agentRows = computed(() => {
@@ -358,6 +359,7 @@ const agentRows = computed(() => {
     summary: a.memorySummary ?? '',
     stance: a.stance ?? '',
     memoryLen: a.memory.length,
+    knownLore: a.knownLore ?? [],
   }))
 })
 
@@ -370,12 +372,25 @@ function toggleAgent(charId: string) {
   expandedAgent.value = charId
   agentEditPersona.value = a?.privatePersona ?? ''
   agentEditMemory.value = a?.memory ?? ''
+  knownLoreEdit.value = (a?.knownLore ?? [])
 }
 
 async function saveAgentEdit() {
   const id = expandedAgent.value
   if (!id) return
-  await ma.updateAgent(id, { privatePersona: agentEditPersona.value, memory: agentEditMemory.value })
+  await ma.updateAgent(id, { privatePersona: agentEditPersona.value, memory: agentEditMemory.value, knownLore: knownLoreEdit.value })
+}
+
+// 该角色"应当知道的世界书条目标题"白名单：可手动增删
+const worldLoreTitles = computed(() =>
+  (worldStore.currentWorld?.lorebook ?? []).map((e) => (e.title ?? '').trim()).filter(Boolean),
+)
+function toggleKnownLore(title: string) {
+  if (knownLoreEdit.value.includes(title)) {
+    knownLoreEdit.value = knownLoreEdit.value.filter((t) => t !== title)
+  } else {
+    knownLoreEdit.value = [...knownLoreEdit.value, title]
+  }
 }
 
 async function unassignAgent(charId: string, name: string) {
@@ -746,6 +761,14 @@ const characterList = computed(() => {
                 <textarea v-model="agentEditPersona" class="status-edit-textarea" rows="5" placeholder="这个角色是谁、怎么说话、在意什么" />
                 <label class="edit-sub-label">记忆</label>
                 <textarea v-model="agentEditMemory" class="status-edit-textarea" rows="6" placeholder="每条以时间开头" />
+                <p class="agent-sub">这个角色应当知道的世界书条目</p>
+                <div v-if="worldLoreTitles.length" class="known-lore-editor">
+                  <label v-for="t in worldLoreTitles" :key="t" class="known-lore-item">
+                    <input type="checkbox" :checked="knownLoreEdit.includes(t)" @change="toggleKnownLore(t)" />
+                    <span>{{ t }}</span>
+                  </label>
+                </div>
+                <p v-else class="muted">（本世界暂无世界书条目）</p>
                 <div class="edit-actions">
                   <button class="status-edit-btn save" @click="saveAgentEdit">完成</button>
                 </div>
@@ -759,6 +782,12 @@ const characterList = computed(() => {
                 </template>
                 <p class="agent-sub">记忆</p>
                 <pre class="agent-pre">{{ a.memory || '（暂无记忆）' }}</pre>
+                <template v-if="(a.knownLore ?? []).length">
+                  <p class="agent-sub">应当知道的世界书条目（优化人设时配置，可开启「允许改写」调整）</p>
+                  <div class="known-lore-view">
+                    <span v-for="t in a.knownLore" :key="t" class="known-lore-chip">{{ t }}</span>
+                  </div>
+                </template>
               </template>
             </template>
           </div>
@@ -1431,4 +1460,38 @@ const characterList = computed(() => {
   font-family: inherit;
   color: var(--text);
 }
+.known-lore-view {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.known-lore-chip {
+  font-size: 12px;
+  color: var(--active);
+  border: 1px solid var(--active);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+.known-lore-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.known-lore-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.known-lore-item input { flex: none; }
 </style>

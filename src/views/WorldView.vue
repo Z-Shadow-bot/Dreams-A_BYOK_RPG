@@ -21,7 +21,6 @@ const ma = useMaStore()
 const showCreate = ref(false)
 const newName = ref('')
 const newDesc = ref('')
-const newMultiAgent = ref(false)
 
 const enhanceSummarize = ref(true) // 总结优化已有设定
 const enhanceExpand = ref(true) // 补充更多合理设定
@@ -152,11 +151,10 @@ async function doCreate() {
       },
     )
     const name = newName.value.trim() || newDesc.value.trim().slice(0, 12)
-    const world = await worldStore.createWorld(name, worldSetting, panelSchema, lorebook, newMultiAgent.value)
+    const world = await worldStore.createWorld(name, worldSetting, panelSchema, lorebook)
     showCreate.value = false
     newName.value = ''
     newDesc.value = ''
-    newMultiAgent.value = false
     // 生成后自动打开设定页让用户预览拆分结果
     openEdit(world)
     editIsPreview.value = true
@@ -173,11 +171,10 @@ async function createEmptyWorld() {
   createError.value = ''
   try {
     const name = newName.value.trim() || '未命名世界'
-    const world = await worldStore.createWorld(name, '', [], [], newMultiAgent.value)
+    const world = await worldStore.createWorld(name, '', [], [])
     showCreate.value = false
     newName.value = ''
     newDesc.value = ''
-    newMultiAgent.value = false
     // 切换冒险上下文到新世界（空世界无存档，冒险页会回到「开始冒险」状态），避免残留上一个世界的存档
     await adventure.open(world.id)
     // 直接打开设定页，方便玩家从零开始填写
@@ -248,7 +245,7 @@ watch(showEdit, (v) => {
 const editMultiAgent = ref(false)
 const expandedAgent = ref<string | null>(null)
 const optimizeTarget = ref<string | null>(null)
-const agentDraft = ref({ privatePersona: '', memory: '', memorySummary: '' })
+const agentDraft = ref({ privatePersona: '', memory: '', memorySummary: '', knownLore: [] as string[] })
 
 interface AgentRow {
   charId: string
@@ -307,6 +304,7 @@ function openAgentPanel(charId: string) {
     privatePersona: a.privatePersona,
     memory: a.memory,
     memorySummary: a.memorySummary ?? '',
+    knownLore: a.knownLore ?? [],
   }
 }
 
@@ -315,6 +313,18 @@ async function saveAgentPanel() {
   if (!id) return
   await ma.updateAgent(id, { ...agentDraft.value })
   expandedAgent.value = null
+}
+
+// 该角色"应当知道的世界书条目标题"白名单：可手动增删
+const viewLoreTitles = computed(() =>
+  editLorebook.value.map((e) => (e.title ?? '').trim()).filter(Boolean),
+)
+function toggleKnownLore(title: string) {
+  if (agentDraft.value.knownLore.includes(title)) {
+    agentDraft.value.knownLore = agentDraft.value.knownLore.filter((t) => t !== title)
+  } else {
+    agentDraft.value.knownLore = [...agentDraft.value.knownLore, title]
+  }
 }
 
 async function toggleAssign(row: AgentRow) {
@@ -343,7 +353,7 @@ async function clearAgentMemory(charId: string) {
   await ma.clearMemory(charId)
   if (expandedAgent.value === charId) {
     const a = ma.agentOf(charId)
-    if (a) agentDraft.value = { privatePersona: a.privatePersona, memory: a.memory, memorySummary: a.memorySummary ?? '' }
+    if (a) agentDraft.value = { privatePersona: a.privatePersona, memory: a.memory, memorySummary: a.memorySummary ?? '', knownLore: a.knownLore ?? [] }
   }
 }
 
@@ -560,12 +570,12 @@ async function importWorldFile() {
 async function doImportDlc() {
   dlcError.value = ''
   importingDlc.value = true
-  const dlcId = createId()
   try {
     const zipBytes = await pickZipFile()
     const parsed = parseDlcZip(zipBytes)
     const m = parsed.manifest
-    // 检测同名 DLC 世界：若已存在，询问用户是更新现有世界（保留存档）还是新建
+    // 检测同名 DLC 世界（模式统一在「开始冒险」时选用，这里只按名字+dlcId 判同世界）：
+    // 若已存在，询问用户更新现有世界（保留存档）还是新建
     const existing = worldStore.worlds.find((w) => w.name === m.world.name && w.dlcId)
     if (existing) {
       const update = window.confirm(
@@ -616,16 +626,22 @@ async function doImportDlc() {
         return
       }
     }
+    const dlcId = createId()
     await persistDlcAudio(dlcId, parsed.bgmBytes)
     try {
-      const world = await worldStore.createDlcWorld(m.world.name, m.world.worldSetting, m.world.panelSchema, {
-        dlcId,
-        sceneField: parsed.manifest.sceneField,
-        bgm: parsed.bgm,
-        lorebook: m.world.lorebook,
-        presetCharacters: m.presetCharacters,
-        characterFallback: parsed.manifest.characterFallback,
-      })
+      const world = await worldStore.createDlcWorld(
+        m.world.name,
+        m.world.worldSetting,
+        m.world.panelSchema,
+        {
+          dlcId,
+          sceneField: parsed.manifest.sceneField,
+          bgm: parsed.bgm,
+          lorebook: m.world.lorebook,
+          presetCharacters: m.presetCharacters,
+          characterFallback: parsed.manifest.characterFallback,
+        },
+      )
       await adventure.open(world.id)
     } catch (e) {
       await removeDlcAudio(dlcId).catch(() => {})
@@ -682,6 +698,7 @@ async function doImportDlc() {
           >
             {{ w.name }}
             <span v-if="w.dlcId" class="dlc-badge">DLC</span>
+            <span v-if="w.multiAgent" class="dlc-badge ma-badge">多智能体</span>
           </div>
           <div class="card-btns">
             <button class="edit-btn" :disabled="duplicating" @click.stop="doDuplicate(w)">
@@ -739,14 +756,6 @@ async function doImportDlc() {
           <span>补充更多合理设定</span>
         </label>
         <p class="desc-hint">两者都不勾选：仅按原文忠实整理，尽量不改动内容</p>
-        <label class="checkbox-row">
-          <input type="checkbox" v-model="newMultiAgent" />
-          <span>多智能体模式</span>
-        </label>
-        <p class="desc-hint">
-          每个在场角色由独立 AI 扮演，各自拥有私密设定与记忆；旁白负责环境与未分配的路人。
-          创建后不可更改（想换模式可复制世界）。
-        </p>
         <p v-if="createError" class="error">{{ createError }}</p>
         <div class="modal-actions">
           <button class="btn ghost" @click="showCreate = false">取消</button>
@@ -924,6 +933,14 @@ async function doImportDlc() {
                 />
                 <label class="lore-sub-label">记忆摘要（更早内容的压缩，可留空）</label>
                 <textarea v-model="agentDraft.memorySummary" class="textarea" rows="3" placeholder="更早经历的摘要" />
+                <label class="lore-sub-label">这个角色应当知道的世界书条目（可增删，勾上才会注入给他）</label>
+                <div v-if="viewLoreTitles.length" class="known-lore-editor">
+                  <label v-for="t in viewLoreTitles" :key="t" class="known-lore-item">
+                    <input type="checkbox" :checked="agentDraft.knownLore.includes(t)" @change="toggleKnownLore(t)" />
+                    <span>{{ t }}</span>
+                  </label>
+                </div>
+                <p v-else class="muted-text">世界书暂无条目</p>
                 <div class="agent-actions">
                   <button class="btn primary" @click="saveAgentPanel">保存</button>
                   <button class="btn ghost" @click="expandedAgent = null">取消</button>
@@ -936,7 +953,7 @@ async function doImportDlc() {
             </p>
           </template>
           <p v-else class="muted-text">
-            这个世界未开启多智能体模式。该模式需在创建世界时选择，创建后不可更改。
+            这个多智能体配置区仅对「以多智能体模式开始冒险」的世界开放。请在冒险页开始冒险时选择该模式，或复制本世界后改用多智能体模式。
           </p>
           <AgentOptimizeModal v-if="optimizeTarget" :char-id="optimizeTarget" @close="optimizeTarget = null" />
         </div>
@@ -1067,6 +1084,10 @@ async function doImportDlc() {
   padding: 1px 5px;
   margin-left: 6px;
   vertical-align: middle;
+}
+.ma-badge {
+  background: var(--green, #4caf86);
+  color: #fff;
 }
 .modal-mask {
   position: fixed;
@@ -1432,6 +1453,27 @@ async function doImportDlc() {
   gap: 8px;
   margin-top: 10px;
 }
+.known-lore-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.known-lore-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.known-lore-item input { flex: none; }
 .edit-tabs {
   display: flex;
   gap: 6px;

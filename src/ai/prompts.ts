@@ -355,8 +355,18 @@ export function bagDetailRule(enabled: boolean): string {
 // 上下文匹配：标签在上下文中出现的次数越多相关度越高（次数加权）
 // 条目对某个观察者是否可见。
 // 未指定 viewerCharId（普通模式单 AI / 构建世界生成）时一律可见，保持向后兼容。
-export function loreVisibleTo(e: LoreEntry, viewerCharId?: string): boolean {
+// knownLore：该角色"应当知道的世界书条目标题"白名单（优化人设时配置）——命中的条目也对其可见。
+export function loreVisibleTo(e: LoreEntry, viewerCharId?: string, knownLore?: string[]): boolean {
   const acc = e.access
+  const title = (e.title ?? '').trim()
+  // 白名单命中的条目按公开处理（该角色本来就知道）
+  if (Array.isArray(knownLore) && title && knownLore.includes(title)) {
+    if (viewerCharId === undefined) return true
+    if (viewerCharId === NARRATOR_ID) return true
+    // 白名单条目视为该角色可知，但纯 secret 的（仅旁白掌握的幕后）仍不可见——除非标题在白名单且非 secret
+    if (acc && acc.mode === 'secret') return false
+    return true
+  }
   if (!acc || acc.mode === 'public') return true
   if (viewerCharId === undefined) return true
   if (viewerCharId === NARRATOR_ID) return true
@@ -384,7 +394,7 @@ export function loreEntryText(e: LoreEntry, viewerCharId?: string): string {
   return (e.content ?? '').trim()
 }
 
-export function buildLoreInjection(world: World, context: string, sceneValue?: string, activeNames?: string[], cfg?: LoreInjectionConfig, viewerCharId?: string): string {
+export function buildLoreInjection(world: World, context: string, sceneValue?: string, activeNames?: string[], cfg?: LoreInjectionConfig, viewerCharId?: string, knownLore?: string[]): string {
   const entries = world.lorebook ?? []
   if (entries.length === 0) return ''
   const scene = (sceneValue ?? '').trim()
@@ -392,7 +402,7 @@ export function buildLoreInjection(world: World, context: string, sceneValue?: s
   const loreBudget = cfg?.loreBudget && cfg.loreBudget > 0 ? cfg.loreBudget : LORE_BUDGET
   const scored: Array<{ e: LoreEntry; rank: number; text: string }> = []
   for (const e of entries) {
-    if (!loreVisibleTo(e, viewerCharId)) continue
+    if (!loreVisibleTo(e, viewerCharId, knownLore)) continue
     const text = loreEntryText(e, viewerCharId)
     if (!text) continue
     const tags = Array.isArray(e.tags) ? e.tags.filter((t) => typeof t === 'string' && t.trim()) : []

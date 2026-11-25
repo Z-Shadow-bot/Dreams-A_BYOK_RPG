@@ -110,6 +110,7 @@ export interface AgentState {
   memory: string // 近期记忆原文（每条带时间前缀）
   memorySummary?: string // 更早记忆的压缩摘要
   stance?: string // 此刻状态（一句话：在做什么/在意什么），发言时由本人更新
+  knownLore?: string[] // 该角色应当知道的世界书条目标题白名单（优化人设时由 AI 建议、玩家确认）
   rev: number // 单调递增，异步写回校验用
   lastSeenDay?: number // 上次在场/被调用的世界日（离线推演用）
   present?: boolean
@@ -326,6 +327,7 @@ export interface APIConfig {
   narrationMin?: number // 每轮叙事字数下限
   narrationMax?: number // 每轮叙事字数上限
   deepThink?: boolean // 深度思考：开启后按模型类型追加思考/推理参数（DeepSeek/Qwen/GLM/GPT/Gemini）
+  webSearch?: boolean // 联网搜索：开启后生成世界/完善设定/写世界书/设计事件时让模型尝试联网检索补充（依赖模型/服务端支持，默认关闭）
 }
 
 // ===== 我的 API（保存多个配置，快速切换；apiKey 独立存 Keystore） =====
@@ -340,6 +342,7 @@ export interface ApiProfile {
   narrationMin: number
   narrationMax: number
   deepThink?: boolean // 深度思考开关
+  webSearch?: boolean // 联网搜索开关（保存到 profile，切换时一并生效）
 }
 
 // ===== AI 请求 / 响应 =====

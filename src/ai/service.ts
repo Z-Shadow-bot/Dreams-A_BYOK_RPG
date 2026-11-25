@@ -342,6 +342,7 @@ export async function generateWorld(
   const content = await chat(
     [{ role: 'user', content: buildWorldGenPrompt(userInput, opts, useSettingsStore().worldSettingMax) }],
     config,
+    { search: config.webSearch },
   )
   const data = extractJson(content) as { worldSetting?: string; lorebook?: unknown[]; panelSchema?: PanelField[] }
   const aiSetting = typeof data.worldSetting === 'string' && data.worldSetting.trim() ? data.worldSetting.trim() : ''
@@ -387,6 +388,7 @@ export async function generateCharacter(
       { role: 'user', content: buildCharacterGenPrompt(world, userInput, min, max, opts, hiddenPreset, getLoreCfg()) + bagDetailRule(detailedBag) },
     ],
     config,
+    { search: config.webSearch },
   )
   const data = extractJson(content) as Record<string, any>
   return {

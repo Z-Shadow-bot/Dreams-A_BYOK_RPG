@@ -229,7 +229,11 @@ function applyThinking(payload: Record<string, unknown>, model: string, deepThin
 }
 
 // 核心调用：组装请求 → CapacitorHttp 原生直连 → 返回 AI 文本
-export async function chat(messages: ChatMessage[], config: APIConfig): Promise<string> {
+export async function chat(
+  messages: ChatMessage[],
+  config: APIConfig,
+  opts: { search?: boolean } = {},
+): Promise<string> {
   const key = await getApiKey()
   if (!key) throw new AIError('尚未配置 API Key，请前往「我的」页面填写并保存')
 
@@ -249,6 +253,20 @@ export async function chat(messages: ChatMessage[], config: APIConfig): Promise<
     response_format: { type: 'json_object' },
   }
   applyThinking(payload, config.model, !!config.deepThink)
+
+  // 联网搜索引导：仅由「一次性创作」类请求（生成世界 / 完善设定 / 写世界书 / 设计事件）传入，
+  // 在首条消息前插入联网检索指引，让支持服务端联网的模型先检索补充再创作。日常推进不启用。
+  if (opts.search) {
+    const guide: ChatMessage = {
+      role: 'system',
+      content:
+        '【联网检索】请在创作前先回顾并尽量检索与主题相关的现实资料（历史、文化、地理、物种、名物、风格等），' +
+        '以丰富设定细节、增强可信度；若你运行在支持服务端联网检索的环境，请先执行检索。仍未拿到结果或环境不支持联网时，' +
+        '依据你已知的知识尽力补充，并确保内容自洽。',
+    }
+    payload.messages = [guide, ...messages]
+    console.log('[ai] 已启用联网搜索引导（一次性创作请求）')
+  }
 
   // 最大等待时间由用户在「我的」页面设置，默认 180 秒
   const waitSeconds = config.maxWaitTime && config.maxWaitTime > 0 ? config.maxWaitTime : 180
